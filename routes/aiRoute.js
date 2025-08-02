@@ -49,7 +49,7 @@ router.post("/generate-image", async (req, res) => {
 
   const pollinationsURL = `https://image.pollinations.ai/prompt/${encodeURIComponent(
     finalPrompt
-  )}?seed=${seed}&private=${private}&nologo=${nologo}`;
+  )}?seed=${seed}&private=${private}&nologo=${nologo}&width=3840&height=2160`;
 
   try {
     const response = await fetch(pollinationsURL);
@@ -70,16 +70,21 @@ router.post("/generate-image", async (req, res) => {
   }
 });
 
-const optimizePrompt = async (prompt) => {
-  const finalPrompt = `You are a professional artist. Your job is to expand the base prompt into a richly detailed, cinematic description — like something you’d use in concept art or visual world-building — and then compress it into an optimized prompt suitable for image generation (Midjourney, DALL·E, etc.) return only the compressed prompt alone.
-  Here is the base prompt: ${prompt}`;
-  const optimizedPrompt = await chatWithGemini(finalPrompt);
-  return optimizedPrompt;
-};
-const promptExplain = async (prompt) => {
-  const finalPrompt = `You are a professional artist. Your job is to explain the prompt to a person. Here is the prompt: ${prompt}`;
-  const explainedPrompt = await chatWithGemini(finalPrompt);
-  return explainedPrompt;
-};
+router.post("/generate-poem", async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || typeof prompt !== "string") {
+    return res
+      .status(400)
+      .json({ error: "Missing or invalid 'prompt' parameter" });
+  }
+
+  try {
+    const result = await chatWithGemini(prompt);
+    res.json({ poem: result.trim() });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to generate poem" });
+  }
+});
 
 module.exports = router;

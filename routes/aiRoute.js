@@ -1,33 +1,31 @@
 const express = require("express");
 const router = express.Router();
 const { chatWithGemini } = require("../models/geminiClient");
+const promptSchema = require("../schemas/promptSchema");
 
 // Generate prompt
 router.get("/generate-prompt", async (req, res) => {
   const prompt = `
 You are a world-class visual prompt writer.
 
-Write a single prompt in EXACTLY two lines (two sentences, separated by a newline).
-Style: concise, cinematic, vivid, and specific; no camera jargon, no model tags, no lists, no quotes.
+Write a single prompt in EXACTLY two lines (two sentences, separated by a newline).  
+Style: bold, cinematic, vivid, and specific; no camera jargon, no model tags, no lists, no quotes.  
 Target length: 28–55 words total across both lines.
 
-Line 1: Subject + artistic lineage/technique + setting + key design elements (what/where/how it looks).
-Line 2: Sky/backdrop + lighting + color palette + texture/motion cues (how it feels visually).
+Line 1: Animal subject + stylized artistic approach + full-body or symbolic composition + key visual elements.  
+Line 2: Environment or background motifs  + color palette (only red and black) + texture, motion, or surreal elements.
 
-Constraints:
-- Vary the subject matter — do NOT focus on any one culture or theme (e.g. samurais, knights, astronauts).
-- Prefer diverse scenes from nature, architecture, surrealism, sci-fi, history, fantasy, abstract, everyday life, etc.
-- Avoid cultural stereotypes or overused tropes.
-- No prefixes or headings; output only those two lines.
-- Do not include aspect ratios, version flags, or hashtags.
-- Prefer concrete nouns and physical descriptors over abstract moods.
-
-Return ONLY the two lines.
+Constraints:  
+- Focus ONLY on animals — full-body, or face..  
+- Use ONLY red and black as the color palette.  
+- Avoid realistic rendering or soft/cute aesthetics.  
+- Style should feel intense, graphic, or otherworldly — like a poster or wallpaper.  
+- Return ONLY the two lines.
 `;
 
   try {
-    const result = await chatWithGemini(prompt);
-    res.json({ prompt: result.trim() });
+    const result = await chatWithGemini(prompt, promptSchema);
+    res.send(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to generate prompt" });
@@ -45,11 +43,11 @@ router.post("/generate-image", async (req, res) => {
       .json({ error: "Missing or invalid 'prompt' parameter" });
   }
 
-  const finalPrompt = `Your are a professional artist agent with experience of generating arts that compete with the best artists in the world. Generate a visually stunning image based on the prompt: ${prompt}`;
+  const finalPrompt = `You're a professional artist agent with experience generating artworks that compete with the best artists in the world. Generate a visually stunning image based on the prompt: ${prompt}`;
 
   const pollinationsURL = `https://image.pollinations.ai/prompt/${encodeURIComponent(
     finalPrompt
-  )}?seed=${seed}&private=${private}&nologo=${nologo}&width=3840&height=2160`;
+  )}?seed=${seed}&private=${private}&nologo=${nologo}&width=1920&height=1080`;
 
   try {
     const response = await fetch(pollinationsURL);
@@ -77,9 +75,11 @@ router.post("/generate-poem", async (req, res) => {
       .status(400)
       .json({ error: "Missing or invalid 'prompt' parameter" });
   }
+  const finalPrompt = `Your are a professional poet with experience of generating poems that compete with the best poets in the world. 
+                        Generate a visually stunning and attractive poem based on the prompt: ${prompt}`;
 
   try {
-    const result = await chatWithGemini(prompt);
+    const result = await chatWithGemini(finalPrompt);
     res.json({ poem: result.trim() });
   } catch (error) {
     console.error(error);

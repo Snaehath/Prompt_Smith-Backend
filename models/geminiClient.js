@@ -14,7 +14,7 @@ async function chatWithGemini(userPrompt, userSchema) {
       temperature: 0.8,
     }
   });
-  return response.text;// raw unprocessed response
+  return response.text;
 }
 
 

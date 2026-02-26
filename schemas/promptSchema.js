@@ -11,4 +11,5 @@ const promptSchema = {
   required: ["title", "artist", "year", "description", "style","prompt"],
 };
 
-module.exports = promptSchema;
+
+module.exports = {promptSchema};

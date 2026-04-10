@@ -1,22 +1,24 @@
 const express = require("express");
 const router = express.Router();
-const { chatWithGemini } = require("../models/geminiClient");
+const { chatWithGemini } = require("../services/geminiService");
 const { promptSchema } = require("../schemas/promptSchema");
 const {
   GENERATE_PROMPT_SYSTEM,
   ENHANCE_PROMPT_SYSTEM,
 } = require("../utils/prompts");
 
-/**
- * [POST] /api/prompts/create
- * Create a new visual prompt
- */
+// # create prompt
 router.post("/create", async (req, res) => {
-  const { style, subject, extraPrompt } = req.body;
-  const systemPrompt = GENERATE_PROMPT_SYSTEM(style, subject, extraPrompt);
+  const { context, style, purpose } = req.body;
+  
+  const sysPrompt = GENERATE_PROMPT_SYSTEM(
+    context, 
+    style || "Photorealistic", 
+    purpose || "Desktop Wallpaper"
+  );
 
   try {
-    const result = await chatWithGemini(systemPrompt, promptSchema);
+    const result = await chatWithGemini(sysPrompt, promptSchema);
     res.send(result);
   } catch (error) {
     console.error("Creation error:", error);
@@ -24,13 +26,10 @@ router.post("/create", async (req, res) => {
   }
 });
 
-/**
- * [POST] /api/prompts/refine
- * Enhance/Refine an existing prompt
- */
+// # refine prompt
 router.post("/refine", async (req, res) => {
-  const { prompt, extraPrompt } = req.body;
-  const sysMsg = ENHANCE_PROMPT_SYSTEM(prompt, extraPrompt);
+  const { prompt, feedback } = req.body;
+  const sysMsg = ENHANCE_PROMPT_SYSTEM(prompt, feedback);
 
   try {
     const result = await chatWithGemini(sysMsg, promptSchema);

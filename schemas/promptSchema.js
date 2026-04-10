@@ -1,3 +1,4 @@
+// # prompt schema for ai validation
 const promptSchema = {
   type: "object",
   properties: {

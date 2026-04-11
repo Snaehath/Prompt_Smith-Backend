@@ -7,9 +7,11 @@ const promptSchema = {
     year: { type: "string" },
     description: { type: "string" },
     style: { type: "string" },
+    subject: { type: "string" },
+    composition: { type: "string" },
     prompt: { type: "string" },
   },
-  required: ["title", "artist", "year", "description", "style","prompt"],
+  required: ["title", "artist", "year", "description", "style", "subject", "composition", "prompt"],
 };
 
 

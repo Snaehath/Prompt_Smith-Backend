@@ -12,12 +12,13 @@ const {
 
 // # expand prompt (Gemini only)
 router.post("/expand", async (req, res) => {
-  const { context, style, purpose, complexity } = req.body;
+  const { subject, action, style, context, complexity } = req.body;
 
   const userText = GENERATE_PROMPT_USER(
+    subject,
+    action,
+    style,
     context,
-    style || "Photorealistic",
-    purpose || "Desktop Wallpaper",
     complexity || 3
   );
 
@@ -36,12 +37,13 @@ router.post("/expand", async (req, res) => {
 
 // # create prompt (Full Flow - Gemini + NVIDIA)
 router.post("/create", async (req, res) => {
-  const { context, style, purpose, resolution, complexity } = req.body;
+  const { subject, action, style, context, resolution, complexity } = req.body;
   
   const userText = GENERATE_PROMPT_USER(
-    context, 
-    style || "Photorealistic", 
-    purpose || "Desktop Wallpaper",
+    subject,
+    action, 
+    style, 
+    context,
     complexity || 3
   );
 

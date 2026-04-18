@@ -3,15 +3,14 @@ const promptSchema = {
   type: "object",
   properties: {
     title: { type: "string" },
-    artist: { type: "string" },
-    year: { type: "string" },
-    description: { type: "string" },
-    style: { type: "string" },
     subject: { type: "string" },
-    composition: { type: "string" },
+    action: { type: "string" },
+    style: { type: "string" },
+    context: { type: "string" },
+    description: { type: "string" },
     prompt: { type: "string" },
   },
-  required: ["title", "artist", "year", "description", "style", "subject", "composition", "prompt"],
+  required: ["title", "subject", "action", "style", "context", "description", "prompt"],
 };
 
 

@@ -11,10 +11,10 @@ Analyze the user's raw idea and extract the "Neural Essence" into a structured b
 
 ARCHITECTURAL ANALYSIS:
 - title: A short, evocative professional name for the piece.
-- subject: The primary entity or concept (e.g., "Cybernetic Obsidian Monk").
-- style: Propose the BEST artistic style/movement that suits the image concept (e.g., "Minimalist Neo-Noir", "Vibrant Impressionism", "Ethereal Brutalism"). Do NOT default to "Noir-Tech" unless specifically requested.
-- composition: The framing or perspective (e.g., "Low-angle wide cinematic").
-- artist: A fictional or historical master who inspires the technique.
+- subject: The main focus (person, object, character).
+- action: What the subject is doing or their pose.
+- style: Artistic approach, medium, or aesthetic.
+- context: Setting, lighting, time, mood, or atmospheric conditions.
 - description: A 1-sentence technical summary of the piece's intent.
 
 STRATEGY:
@@ -27,12 +27,13 @@ CONSTRAINTS:
 - Return the Master Blueprint in the MUST-FOLLOW JSON format.
 `;
 
-const GENERATE_PROMPT_USER = (context, style, purpose, complexity = 3) => `
+const GENERATE_PROMPT_USER = (subject, action, style, context, complexity = 3) => `
 Pillars for the artwork:
-1. Context (Subject + Theme): ${context}
-2. Style: ${style}
-3. Purpose: ${purpose}
-4. Complexity Level: ${complexity}/5 (1 = Minimalistic, 5 = Deeply Detailed & Technical)
+1. Subject: ${subject}
+2. Action: ${action || "[To be analyzed from Subject description]"}
+3. Style: ${style || "[To be analyzed from Subject description]"}
+4. Context: ${context || "[To be analyzed from Subject description]"}
+5. Complexity Level: ${complexity}/5
 
 Synthesize these into a master prompt. The length and detail density should scale directly with the Complexity Level. At Level 5, provide an exhaustive architectural breakdown.
 `;

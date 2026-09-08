@@ -24,10 +24,13 @@ app.use(globalLimiter);
 const authRoutes = require("./routes/authRoutes");
 const promptRoutes = require("./routes/promptRoutes");
 const promptNeuralRoute = require("./routes/promptRoute");
+const generationRoutes = require("./routes/generationRoutes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/prompts", promptRoutes);
 app.use("/api/prompt", promptNeuralRoute);
+app.use("/api/generations", generationRoutes);
+
 
 // System Health & Status
 app.get("/api/status", (req, res) => {

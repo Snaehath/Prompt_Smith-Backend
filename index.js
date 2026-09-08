@@ -112,6 +112,11 @@ app.use((err, req, res, next) => {
 const startServer = async () => {
   try {
     await connectDB();
+
+    // Reconcile and recover any jobs interrupted by previous server lifecycle
+    const { generationQueue } = require("./services/generationQueue");
+    await generationQueue.reconcileZombieJobs();
+
     app.listen(port, () => {
       console.log(`🚀 PromptSmith Engine listening on port ${port}`);
     });

@@ -1,15 +1,18 @@
-# 🛠️ PromptSmith Production AI Gateway & Integration Guide
+# 🛠️ PromptSmith Backend — Production AI Gateway & API Specification
 
-> **PromptSmith** is an enterprise-grade Generative AI orchestration gateway. It decouples generation job creation from real-time telemetry streaming, protects external provider quotas via an automated Three-State Circuit Breaker (`CLOSED`, `OPEN`, `HALF_OPEN`), enforces request idempotency, and delivers real-time progress via safe Server-Sent Events (SSE).
+> **PromptSmith Backend** is an enterprise-grade Generative AI orchestration gateway. It decouples generation job creation from real-time telemetry streaming, protects external provider quotas via an automated Three-State Circuit Breaker (`CLOSED`, `OPEN`, `HALF_OPEN`), enforces request idempotency, and delivers real-time progress via safe Server-Sent Events (SSE).
+
+🔗 **Companion Frontend Repository:** [https://github.com/Snaehath/Prompt_Smith-Frontend](https://github.com/Snaehath/Prompt_Smith-Frontend)
 
 ---
 
 ## 📑 Table of Contents
 1. [Architecture & System Design](#-architecture--system-design)
 2. [Environment Configuration](#-environment-configuration)
-3. [Model Registry & Providers](#-model-registry--providers)
-4. [Asynchronous Generation Lifecycle](#-asynchronous-generation-lifecycle)
-5. [API Endpoints Reference](#-api-endpoints-reference)
+3. [Getting Started](#-getting-started)
+4. [Model Registry & Providers](#-model-registry--providers)
+5. [Asynchronous Generation Lifecycle](#-asynchronous-generation-lifecycle)
+6. [API Endpoints Reference](#-api-endpoints-reference)
    - [Health & Observability Probes](#1-health--observability-probes)
    - [Asynchronous Generation Job API](#2-asynchronous-generation-job-api)
    - [Neural Expansion (Synchronous Blueprint)](#3-neural-expansion-synchronous-blueprint)
@@ -87,6 +90,24 @@ MONGODB_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/promptsmith?retr
 JWT_SECRET=your_super_secret_jwt_key
 GEMINI_API_KEY=AIzaSy...
 NVIDIA_API_KEY=nvapi-... # Optional: If missing/exhausted, circuit router automatically routes to Pollinations
+```
+
+---
+
+## 🚀 Getting Started
+
+### Installation
+```bash
+npm install
+```
+
+### Running the Server
+```bash
+# Start server in production mode
+npm start
+
+# Start server in development mode (hot-reload with nodemon)
+npm run dev
 ```
 
 ---
@@ -263,6 +284,8 @@ Requires `Authorization: Bearer <token>`
 ---
 
 ## 💻 Frontend Integration Contract (Next.js)
+
+> **Frontend Project:** [https://github.com/Snaehath/Prompt_Smith-Frontend](https://github.com/Snaehath/Prompt_Smith-Frontend)
 
 ### TypeScript Interfaces
 

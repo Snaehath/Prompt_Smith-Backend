@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 
 const GenerationStatus = {
   QUEUED: "queued",
@@ -24,6 +25,10 @@ const GenerationSchema = new mongoose.Schema(
       default: null,
       trim: true
     },
+    payloadHash: {
+      type: String,
+      default: null
+    },
     status: {
       type: String,
       enum: Object.values(GenerationStatus),
@@ -48,7 +53,8 @@ const GenerationSchema = new mongoose.Schema(
       complexity: { type: Number, default: 3 },
       resolution: { type: String, default: "16:9" },
       modelId: { type: String, default: "flux-1-dev" },
-      seed: { type: Number, default: null }
+      seed: { type: Number, default: null },
+      steps: { type: Number, default: null }
     },
     blueprint: {
       title: { type: String },
@@ -102,7 +108,8 @@ const GenerationSchema = new mongoose.Schema(
       seed: { type: Number, default: null },
       versions: {
         promptSchemaVersion: { type: Number, default: 1 },
-        systemPromptVersion: { type: Number, default: 1 }
+        systemPromptVersion: { type: Number, default: 2 },
+        generatorVersion: { type: String, default: "2.3.0" }
       }
     },
     startedAt: { type: Date, default: null },
@@ -115,49 +122,49 @@ const GenerationSchema = new mongoose.Schema(
 GenerationSchema.index({ userId: 1, createdAt: -1 });
 GenerationSchema.index({ status: 1, createdAt: -1 });
 GenerationSchema.index({ idempotencyKey: 1, userId: 1 }, { sparse: true });
+GenerationSchema.index({ createdAt: -1 });
 
-// Lifecycle helper methods
-GenerationSchema.methods.markRunning = function (stage = "starting", progress = 5) {
-  this.status = GenerationStatus.RUNNING;
-  this.stage = stage;
-  this.progress = progress;
-  this.startedAt = this.startedAt || new Date();
-  return this.save();
+// Helper to compute deterministic hash of canonical generation input
+GenerationSchema.statics.computePayloadHash = function (input) {
+  const canonical = JSON.stringify({
+    subject: (input.subject || "").trim().toLowerCase(),
+    action: (input.action || "").trim().toLowerCase(),
+    style: (input.style || "").trim().toLowerCase(),
+    context: (input.context || "").trim().toLowerCase(),
+    complexity: Number(input.complexity) || 3,
+    resolution: input.resolution || "16:9",
+    modelId: input.modelId || "flux-1-dev",
+    seed: input.seed !== null && input.seed !== undefined ? Number(input.seed) : null
+  });
+  return crypto.createHash("sha256").update(canonical).digest("hex");
 };
 
-GenerationSchema.methods.updateStage = function (stage, progress, patch = {}) {
-  this.stage = stage;
-  this.progress = progress;
-  Object.assign(this, patch);
-  return this.save();
-};
+/**
+ * Atomic State Machine Transition
+ * Ensures that terminal states (completed, failed, cancelled) can NEVER be overwritten by races.
+ */
+GenerationSchema.statics.atomicTransition = async function (generationId, allowedFromStatuses, targetStatus, patch = {}) {
+  const query = {
+    _id: generationId,
+    status: { $in: allowedFromStatuses }
+  };
 
-GenerationSchema.methods.markCompleted = function ({ image, blueprint, metadata = {}, cost = {} }) {
-  this.status = GenerationStatus.COMPLETED;
-  this.stage = "complete";
-  this.progress = 100;
-  if (image) this.image = image;
-  if (blueprint) this.blueprint = blueprint;
-  if (cost) this.cost = { ...this.cost, ...cost };
-  if (metadata) this.metadata = { ...this.metadata, ...metadata };
-  this.completedAt = new Date();
-  return this.save();
-};
+  const update = {
+    $set: {
+      status: targetStatus,
+      ...patch
+    }
+  };
 
-GenerationSchema.methods.markFailed = function ({ code, message, retryable = false, details = null }) {
-  this.status = GenerationStatus.FAILED;
-  this.stage = "failed";
-  this.error = { code, message, retryable, details };
-  this.completedAt = new Date();
-  return this.save();
-};
+  if (targetStatus === GenerationStatus.RUNNING && !patch.startedAt) {
+    update.$set.startedAt = new Date();
+  }
 
-GenerationSchema.methods.markCancelled = function (reason = "Client requested cancellation") {
-  this.status = GenerationStatus.CANCELLED;
-  this.stage = "cancelled";
-  this.error = { code: "GENERATION_CANCELLED", message: reason, retryable: false };
-  this.completedAt = new Date();
-  return this.save();
+  if ([GenerationStatus.COMPLETED, GenerationStatus.FAILED, GenerationStatus.CANCELLED].includes(targetStatus)) {
+    update.$set.completedAt = new Date();
+  }
+
+  return await this.findOneAndUpdate(query, update, { new: true });
 };
 
 module.exports = {

@@ -1,5 +1,6 @@
 const { Generation, GenerationStatus } = require("../models/Generation");
 const { generationQueue } = require("../services/generationQueue");
+const { createStreamTicket } = require("../middleware/authMiddleware");
 const ApiError = require("../utils/ApiError");
 
 /**
@@ -10,7 +11,7 @@ const writeSSE = (res, id, event, data) => {
 };
 
 /**
- * @desc    Create a new asynchronous image generation job (Decoupled from SSE)
+ * @desc    Create a new asynchronous image generation job (Decoupled & Idempotent)
  * @route   POST /api/generations
  */
 exports.createGeneration = async (req, res, next) => {
@@ -23,20 +24,25 @@ exports.createGeneration = async (req, res, next) => {
       complexity = 3,
       resolution = "16:9",
       modelId = "flux-1-dev",
-      seed = null
+      seed = null,
+      steps = null
     } = req.body;
-
-    if (!subject || typeof subject !== "string" || subject.trim().length === 0) {
-      throw ApiError.badRequest("Subject is required and must be a non-empty string", "INVALID_SUBJECT");
-    }
-
-    if (subject.length > 500) {
-      throw ApiError.badRequest("Subject exceeds maximum length of 500 characters", "SUBJECT_TOO_LONG");
-    }
 
     const numComplexity = Math.min(Math.max(Number(complexity) || 3, 1), 5);
 
-    // Check Idempotency Key (prevents duplicate billing/generation on network retries)
+    // Compute deterministic payload hash for idempotency conflict detection
+    const payloadHash = Generation.computePayloadHash({
+      subject,
+      action,
+      style,
+      context,
+      complexity: numComplexity,
+      resolution,
+      modelId,
+      seed
+    });
+
+    // Check Idempotency Key
     const idempotencyKey = req.headers["idempotency-key"] || req.headers["x-idempotency-key"];
     if (idempotencyKey && typeof idempotencyKey === "string" && idempotencyKey.trim().length > 0) {
       const cleanKey = idempotencyKey.trim();
@@ -45,6 +51,14 @@ exports.createGeneration = async (req, res, next) => {
 
       const existingJob = await Generation.findOne(existingQuery);
       if (existingJob) {
+        // Enforce Idempotency Safety: same key + different payload MUST be rejected!
+        if (existingJob.payloadHash && existingJob.payloadHash !== payloadHash) {
+          throw ApiError.conflict(
+            "Idempotency key was already submitted with a different request payload",
+            "IDEMPOTENCY_PAYLOAD_MISMATCH"
+          );
+        }
+
         return res.status(200).json({
           jobId: existingJob._id,
           status: existingJob.status,
@@ -60,6 +74,7 @@ exports.createGeneration = async (req, res, next) => {
     const generation = await Generation.create({
       userId: req.user ? req.user._id : null,
       idempotencyKey: idempotencyKey ? idempotencyKey.trim() : null,
+      payloadHash,
       status: GenerationStatus.QUEUED,
       stage: "queued",
       progress: 0,
@@ -71,7 +86,8 @@ exports.createGeneration = async (req, res, next) => {
         complexity: numComplexity,
         resolution,
         modelId,
-        seed: seed !== null && !isNaN(Number(seed)) ? Number(seed) : null
+        seed: seed !== null && !isNaN(Number(seed)) ? Number(seed) : null,
+        steps: steps !== null && !isNaN(Number(steps)) ? Number(steps) : null
       },
       modelId,
       metadata: {
@@ -96,6 +112,36 @@ exports.createGeneration = async (req, res, next) => {
 };
 
 /**
+ * @desc    Issue a short-lived (60s) single-use ticket for native browser EventSource
+ * @route   POST /api/generations/:id/ticket
+ */
+exports.getStreamTicket = async (req, res, next) => {
+  try {
+    const generation = await Generation.findById(req.params.id);
+    if (!generation) {
+      throw ApiError.notFound("Generation job not found", "JOB_NOT_FOUND");
+    }
+
+    // Enforce ownership if job is bound to a user
+    if (generation.userId) {
+      if (!req.user || !generation.userId.equals(req.user._id)) {
+        throw ApiError.forbidden("Not authorized to access stream for this generation", "UNAUTHORIZED_ACCESS");
+      }
+    }
+
+    const ticket = createStreamTicket(req.user?._id, generation._id, 60);
+
+    res.status(200).json({
+      ticket,
+      expiresIn: 60,
+      eventsUrl: `/api/generations/${generation._id}/events?ticket=${encodeURIComponent(ticket)}`
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * @desc    Pure read-only SSE telemetry listener for a generation job
  *          Reconnecting to this endpoint NEVER initiates a new generation.
  * @route   GET /api/generations/:id/events
@@ -107,6 +153,13 @@ exports.getGenerationEvents = async (req, res, next) => {
       throw ApiError.notFound("Generation job not found", "JOB_NOT_FOUND");
     }
 
+    // IDOR Security: Enforce ownership check if generation belongs to a registered user
+    if (generation.userId) {
+      if (!req.user || !generation.userId.equals(req.user._id)) {
+        throw ApiError.forbidden("Access denied to this generation", "UNAUTHORIZED_ACCESS");
+      }
+    }
+
     // Configure headers for resilient SSE
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -115,10 +168,14 @@ exports.getGenerationEvents = async (req, res, next) => {
       "X-Accel-Buffering": "no"
     });
 
-    // Reconnection advice: wait 3 seconds before reconnecting
+    // Reconnection advice for browser EventSource
     res.write("retry: 3000\n\n");
 
     let eventSeq = 1;
+    const lastEventId = req.headers["last-event-id"];
+    if (lastEventId) {
+      eventSeq = Number(lastEventId) + 1;
+    }
 
     // If job is already in a terminal state when client connects
     if (generation.status === GenerationStatus.COMPLETED) {
@@ -150,7 +207,7 @@ exports.getGenerationEvents = async (req, res, next) => {
       return res.end();
     }
 
-    // Send initial snapshot
+    // Send initial snapshot so client recovers state immediately upon connect/reconnect
     writeSSE(res, eventSeq++, "stage", {
       generationId: generation._id,
       stage: generation.stage,
@@ -158,18 +215,22 @@ exports.getGenerationEvents = async (req, res, next) => {
       status: generation.status
     });
 
+    if (generation.blueprint) {
+      writeSSE(res, eventSeq++, "blueprint", generation.blueprint);
+    }
+
     // Subscribe to live queue events
     const unsubscribe = generationQueue.subscribe(generation._id, (payload) => {
       writeSSE(res, payload.id, payload.event, payload.data);
 
-      // Close stream on terminal events
+      // Close stream cleanly on terminal events
       if (["complete", "failed", "cancelled"].includes(payload.event)) {
         clearInterval(heartbeatInterval);
         res.end();
       }
     });
 
-    // Heartbeat every 15 seconds to prevent NAT/proxy disconnects
+    // Heartbeat ping every 15 seconds to prevent NAT/proxy disconnects
     const heartbeatInterval = setInterval(() => {
       res.write(": heartbeat\n\n");
     }, 15000);
@@ -185,7 +246,7 @@ exports.getGenerationEvents = async (req, res, next) => {
 };
 
 /**
- * @desc    Polling endpoint for job status & result
+ * @desc    Polling endpoint for authoritative job snapshot & result
  * @route   GET /api/generations/:id
  */
 exports.getGenerationStatus = async (req, res, next) => {
@@ -193,6 +254,13 @@ exports.getGenerationStatus = async (req, res, next) => {
     const generation = await Generation.findById(req.params.id);
     if (!generation) {
       throw ApiError.notFound("Generation job not found", "JOB_NOT_FOUND");
+    }
+
+    // IDOR Security: Enforce ownership check
+    if (generation.userId) {
+      if (!req.user || !generation.userId.equals(req.user._id)) {
+        throw ApiError.forbidden("Access denied to this generation", "UNAUTHORIZED_ACCESS");
+      }
     }
 
     res.status(200).json(generation);
@@ -212,9 +280,11 @@ exports.cancelGeneration = async (req, res, next) => {
       throw ApiError.notFound("Generation job not found", "JOB_NOT_FOUND");
     }
 
-    // Ownership check if job belongs to a user
-    if (generation.userId && req.user && !generation.userId.equals(req.user._id)) {
-      throw ApiError.forbidden("Not authorized to cancel this generation", "UNAUTHORIZED_CANCELLATION");
+    // IDOR Security: Enforce ownership check
+    if (generation.userId) {
+      if (!req.user || !generation.userId.equals(req.user._id)) {
+        throw ApiError.forbidden("Not authorized to cancel this generation", "UNAUTHORIZED_CANCELLATION");
+      }
     }
 
     const cancelResult = await generationQueue.cancel(
@@ -224,7 +294,6 @@ exports.cancelGeneration = async (req, res, next) => {
 
     res.status(200).json({
       jobId: generation._id,
-      status: GenerationStatus.CANCELLED,
       ...cancelResult
     });
   } catch (error) {
@@ -233,7 +302,7 @@ exports.cancelGeneration = async (req, res, next) => {
 };
 
 /**
- * @desc    List generation history (Paginated)
+ * @desc    List generation history (Paginated & Ownership-isolated)
  * @route   GET /api/generations
  */
 exports.listGenerations = async (req, res, next) => {
@@ -243,7 +312,7 @@ exports.listGenerations = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     const query = req.user
-      ? { $or: [{ userId: req.user._id }, { userId: null }] }
+      ? { userId: req.user._id }
       : { userId: null };
 
     const [items, total] = await Promise.all([

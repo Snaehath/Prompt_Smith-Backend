@@ -20,21 +20,70 @@ class GenerationQueue extends EventEmitter {
   }
 
   /**
+   * Reconcile interrupted or orphaned jobs on server startup
+   */
+  async reconcileZombieJobs() {
+    try {
+      // 1. Mark in-progress jobs that crashed with previous process as failed
+      const interrupted = await Generation.updateMany(
+        { status: GenerationStatus.RUNNING },
+        {
+          $set: {
+            status: GenerationStatus.FAILED,
+            stage: "failed",
+            completedAt: new Date(),
+            error: {
+              code: "SERVER_RESTARTED",
+              message: "Generation was interrupted by a server restart and cannot be safely resumed. Please retry.",
+              retryable: true
+            }
+          }
+        }
+      );
+
+      if (interrupted.modifiedCount > 0) {
+        console.log(`[GenerationQueue] Reconciled ${interrupted.modifiedCount} zombie jobs from previous instance.`);
+      }
+
+      // 2. Re-enqueue jobs that were waiting in queued state
+      const queuedJobs = await Generation.find({ status: GenerationStatus.QUEUED }).sort({ createdAt: 1 });
+      for (const job of queuedJobs) {
+        const idStr = job._id.toString();
+        if (!this.waitingQueue.includes(idStr)) {
+          this.waitingQueue.push(idStr);
+          this.eventSequences.set(idStr, 0);
+        }
+      }
+
+      if (queuedJobs.length > 0) {
+        console.log(`[GenerationQueue] Recovered ${queuedJobs.length} queued jobs from database.`);
+        this.processNext();
+      }
+    } catch (err) {
+      console.error("[GenerationQueue] Startup job reconciliation failed:", err.message);
+    }
+  }
+
+  /**
    * Enqueue a generation job ID for background processing
    */
   async enqueue(generationId) {
-    this.waitingQueue.push(generationId.toString());
-    this.eventSequences.set(generationId.toString(), 0);
-    this.emitEvent(generationId.toString(), "queued", {
+    const id = generationId.toString();
+    this.waitingQueue.push(id);
+    this.eventSequences.set(id, 0);
+
+    this.emitEvent(id, "queued", {
       status: GenerationStatus.QUEUED,
+      stage: "queued",
       progress: 0,
       queuePosition: this.waitingQueue.length
     });
+
     this.processNext();
   }
 
   /**
-   * Cancel an active or queued generation job
+   * Safely cancel an active or queued generation job
    */
   async cancel(generationId, reason = "User requested cancellation") {
     const id = generationId.toString();
@@ -43,35 +92,33 @@ class GenerationQueue extends EventEmitter {
     const queueIndex = this.waitingQueue.indexOf(id);
     if (queueIndex !== -1) {
       this.waitingQueue.splice(queueIndex, 1);
-      await Generation.findByIdAndUpdate(id, {
-        status: GenerationStatus.CANCELLED,
-        stage: "cancelled",
-        completedAt: new Date(),
-        "error.code": "GENERATION_CANCELLED",
-        "error.message": reason
-      });
-      this.emitEvent(id, "cancelled", { reason });
-      this.cleanup(id);
-      return { success: true, status: GenerationStatus.CANCELLED };
     }
 
-    // 2. If currently running, signal abort
+    // 2. If running, abort HTTP signals downstream
     const abortController = this.activeAbortControllers.get(id);
     if (abortController) {
       abortController.abort();
-      await Generation.findByIdAndUpdate(id, {
-        status: GenerationStatus.CANCELLED,
-        stage: "cancelled",
-        completedAt: new Date(),
-        "error.code": "GENERATION_CANCELLED",
-        "error.message": reason
-      });
-      this.emitEvent(id, "cancelled", { reason });
-      this.cleanup(id);
-      return { success: true, status: GenerationStatus.CANCELLED };
     }
 
-    return { success: false, message: "Job not cancellable or already finished" };
+    // 3. Atomically transition state to CANCELLED (cannot overwrite COMPLETED or FAILED)
+    const updated = await Generation.atomicTransition(
+      id,
+      [GenerationStatus.QUEUED, GenerationStatus.RUNNING],
+      GenerationStatus.CANCELLED,
+      {
+        stage: "cancelled",
+        error: { code: "GENERATION_CANCELLED", message: reason, retryable: false }
+      }
+    );
+
+    this.cleanup(id);
+
+    if (!updated) {
+      return { success: false, message: "Job is already completed, failed, or cancelled" };
+    }
+
+    this.emitEvent(id, "cancelled", { reason });
+    return { success: true, status: GenerationStatus.CANCELLED };
   }
 
   /**
@@ -85,7 +132,7 @@ class GenerationQueue extends EventEmitter {
   }
 
   /**
-   * Emit versioned monotonic SSE event
+   * Emit monotonic SSE event to subscribers
    */
   emitEvent(generationId, eventType, data) {
     const id = generationId.toString();
@@ -121,7 +168,7 @@ class GenerationQueue extends EventEmitter {
 
     this.executeJob(nextJobId, abortController.signal)
       .catch((err) => {
-        console.error(`[GenerationQueue] Fatal uncaught error on job ${nextJobId}:`, err);
+        console.error(`[GenerationQueue] Fatal uncaught worker error on job ${nextJobId}:`, err);
       })
       .finally(() => {
         this.runningCount--;
@@ -131,7 +178,7 @@ class GenerationQueue extends EventEmitter {
   }
 
   /**
-   * Execute the multi-stage generation state machine
+   * Multi-stage generation worker with race-safe atomic state transitions
    */
   async executeJob(generationId, signal) {
     const startTime = Date.now();
@@ -140,19 +187,29 @@ class GenerationQueue extends EventEmitter {
     try {
       generation = await Generation.findById(generationId);
       if (!generation) {
-        console.error(`[GenerationQueue] Job not found: ${generationId}`);
+        console.error(`[GenerationQueue] Job not found in database: ${generationId}`);
         return;
       }
 
-      if (generation.status === GenerationStatus.CANCELLED) {
+      if ([GenerationStatus.COMPLETED, GenerationStatus.CANCELLED, GenerationStatus.FAILED].includes(generation.status)) {
         return;
       }
 
-      // Check for early cancellation
       if (signal.aborted) throw new Error("AbortError");
 
       // === Stage 1: Running & Prompt Blueprint Expansion ===
-      await generation.markRunning("blueprint_synthesis", 20);
+      const runningJob = await Generation.atomicTransition(
+        generationId,
+        [GenerationStatus.QUEUED],
+        GenerationStatus.RUNNING,
+        { stage: "blueprint_synthesis", progress: 20 }
+      );
+
+      if (!runningJob) {
+        console.log(`[GenerationQueue] Job ${generationId} transition to RUNNING aborted (already finished or cancelled).`);
+        return;
+      }
+
       this.emitEvent(generationId, "stage", {
         stage: "blueprint_synthesis",
         progress: 20,
@@ -170,8 +227,10 @@ class GenerationQueue extends EventEmitter {
       const blueprint = await chatWithGemini(GENERATE_PROMPT_SYSTEM, userText, promptSchema);
       if (signal.aborted) throw new Error("AbortError");
 
-      generation.blueprint = blueprint;
-      await generation.updateStage("visual_rendering", 50, { blueprint });
+      // Update blueprint in DB
+      await Generation.findByIdAndUpdate(generationId, {
+        $set: { blueprint, stage: "visual_rendering", progress: 50 }
+      });
 
       this.emitEvent(generationId, "blueprint", blueprint);
       this.emitEvent(generationId, "stage", {
@@ -195,11 +254,12 @@ class GenerationQueue extends EventEmitter {
       }
 
       const imageUrl = synthResult.imageUrl;
-      generation.fallbackUsed = Boolean(synthResult.fallbackUsed);
-      generation.provider = synthResult.provider;
 
       // === Stage 3: Archiving & Persistence ===
-      await generation.updateStage("archiving", 85);
+      await Generation.findByIdAndUpdate(generationId, {
+        $set: { stage: "archiving", progress: 85 }
+      });
+
       this.emitEvent(generationId, "stage", {
         stage: "archiving",
         progress: 85,
@@ -221,21 +281,35 @@ class GenerationQueue extends EventEmitter {
         }
       });
 
-      // Mark Generation completed
-      await generation.markCompleted({
-        image: {
-          url: imageUrl,
-          mimeType: "image/jpeg",
-          width: generation.input.resolution === "16:9" ? 1248 : 1024,
-          height: generation.input.resolution === "16:9" ? 832 : 1024
-        },
-        blueprint,
-        metadata: {
-          generationDurationMs: durationMs,
-          seed: generation.input.seed,
-          artifactId: artifact._id
+      // Atomically mark COMPLETED (ensures cancellation cannot be overwritten)
+      const completedJob = await Generation.atomicTransition(
+        generationId,
+        [GenerationStatus.RUNNING],
+        GenerationStatus.COMPLETED,
+        {
+          stage: "complete",
+          progress: 100,
+          image: {
+            url: imageUrl,
+            mimeType: "image/jpeg",
+            width: generation.input.resolution === "16:9" ? 1248 : 1024,
+            height: generation.input.resolution === "16:9" ? 832 : 1024
+          },
+          blueprint,
+          fallbackUsed: Boolean(synthResult.fallbackUsed),
+          provider: synthResult.provider || "nvidia",
+          metadata: {
+            generationDurationMs: durationMs,
+            seed: generation.input.seed,
+            artifactId: artifact._id
+          }
         }
-      });
+      );
+
+      if (!completedJob) {
+        console.log(`[GenerationQueue] Job ${generationId} was cancelled during synthesis, completion discarded.`);
+        return;
+      }
 
       // Emit complete
       this.emitEvent(generationId, "complete", {
@@ -252,23 +326,35 @@ class GenerationQueue extends EventEmitter {
 
       if (isAbort) {
         console.log(`[GenerationQueue] Job ${generationId} cancelled cleanly.`);
-        if (generation) {
-          await generation.markCancelled("Generation aborted by user");
-        }
+        await Generation.atomicTransition(
+          generationId,
+          [GenerationStatus.QUEUED, GenerationStatus.RUNNING],
+          GenerationStatus.CANCELLED,
+          {
+            stage: "cancelled",
+            error: { code: "GENERATION_CANCELLED", message: "Generation aborted by user", retryable: false }
+          }
+        );
         this.emitEvent(generationId, "cancelled", { reason: "Aborted by user" });
       } else {
         console.error(`[GenerationQueue] Job ${generationId} failed:`, err.message);
-        if (generation) {
-          await generation.markFailed({
-            code: "GENERATION_FAILED",
-            message: err.message || "Synthesis failed",
-            retryable: true
-          });
-        }
+        await Generation.atomicTransition(
+          generationId,
+          [GenerationStatus.QUEUED, GenerationStatus.RUNNING],
+          GenerationStatus.FAILED,
+          {
+            stage: "failed",
+            error: {
+              code: err.code || "GENERATION_FAILED",
+              message: err.message || "Synthesis failed",
+              retryable: err.retryable !== false
+            }
+          }
+        );
         this.emitEvent(generationId, "failed", {
-          code: "GENERATION_FAILED",
+          code: err.code || "GENERATION_FAILED",
           message: err.message || "Synthesis failed",
-          retryable: true
+          retryable: err.retryable !== false
         });
       }
     }
@@ -277,6 +363,7 @@ class GenerationQueue extends EventEmitter {
   cleanup(generationId) {
     const id = generationId.toString();
     this.activeAbortControllers.delete(id);
+    this.eventSequences.delete(id);
   }
 }
 

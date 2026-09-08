@@ -67,6 +67,12 @@ class CircuitBreaker {
   }
 
   recordFailure(error) {
+    // Client errors (4xx other than 429) do NOT indicate provider unhealthiness
+    if (error && error.status && error.status >= 400 && error.status < 500 && error.status !== 429) {
+      console.log(`[CircuitBreaker:${this.name}] Ignoring client-side error (HTTP ${error.status}) for circuit tripping.`);
+      return;
+    }
+
     this.failureCount++;
     this.lastFailureTime = Date.now();
 

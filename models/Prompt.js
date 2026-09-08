@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { isLocalMode } = require("../utils/db");
+const { LocalPrompt } = require("../utils/localStore");
 
 const VariableSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -8,7 +10,7 @@ const VariableSchema = new mongoose.Schema({
 const VersionSchema = new mongoose.Schema({
   content: { type: String, required: true },
   imageUrl: { type: String },
-  parameters: { type: Map, of: String }, // e.g., { "--ar": "16:9", "--v": "6" }
+  parameters: { type: Map, of: String },
   createdAt: { type: Date, default: Date.now },
 });
 
@@ -16,7 +18,7 @@ const PromptSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
     description: { type: String },
-    rawContent: { type: String, required: true }, // The prompt with {{variables}}
+    rawContent: { type: String, required: true },
     variables: [VariableSchema],
     category: { type: String },
     tags: [{ type: String }],
@@ -27,4 +29,18 @@ const PromptSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.models.Prompt || mongoose.model("Prompt", PromptSchema);
+const MongoosePrompt = mongoose.models.Prompt || mongoose.model("Prompt", PromptSchema);
+
+const Prompt = new Proxy(MongoosePrompt, {
+  get(target, prop) {
+    if (isLocalMode()) {
+      if (prop in LocalPrompt) {
+        return LocalPrompt[prop];
+      }
+    }
+    return target[prop];
+  }
+});
+
+Prompt.Prompt = Prompt;
+module.exports = Prompt;

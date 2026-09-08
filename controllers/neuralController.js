@@ -9,6 +9,7 @@ const {
   RETRY_QUALITY_SYSTEM,
 } = require("../utils/prompts");
 const ArtifactModel = require("../models/Artifact");
+const ApiError = require("../utils/ApiError");
 
 // Helper to format SSE events
 const sendSSE = (res, event, data) => {
@@ -57,11 +58,11 @@ exports.getArchive = async (req, res, next) => {
  * @desc    Expand raw ideas into structured art prompt blueprint
  * @route   POST /api/prompt/expand
  */
-exports.expandPromptBlueprint = async (req, res) => {
+exports.expandPromptBlueprint = async (req, res, next) => {
   const { subject, action, style, context, complexity } = req.body;
 
-  if (!subject) {
-    return res.status(400).json({ error: "Subject is required for prompt expansion" });
+  if (!subject || typeof subject !== "string" || subject.trim().length === 0) {
+    return next(ApiError.badRequest("Subject is required for prompt expansion", "INVALID_INPUT"));
   }
 
   const userText = GENERATE_PROMPT_USER(
@@ -80,8 +81,7 @@ exports.expandPromptBlueprint = async (req, res) => {
     );
     res.status(200).json(result);
   } catch (error) {
-    console.error("Expansion error:", error);
-    res.status(500).json({ error: "Failed to expand prompt" });
+    next(error);
   }
 };
 
@@ -89,11 +89,11 @@ exports.expandPromptBlueprint = async (req, res) => {
  * @desc    Full generation pipeline: Gemini expansion + Neural image synthesis
  * @route   POST /api/prompt/create
  */
-exports.createPromptAndImage = async (req, res) => {
+exports.createPromptAndImage = async (req, res, next) => {
   const { subject, action, style, context, resolution, complexity, modelId, seed } = req.body;
 
-  if (!subject) {
-    return res.status(400).json({ error: "Subject is required for creation" });
+  if (!subject || typeof subject !== "string" || subject.trim().length === 0) {
+    return next(ApiError.badRequest("Subject is required for creation", "INVALID_INPUT"));
   }
 
   const startTime = Date.now();
@@ -123,7 +123,7 @@ exports.createPromptAndImage = async (req, res) => {
     );
 
     if (!imageUrl) {
-      throw new Error("Image synthesis pipeline returned empty output");
+      throw ApiError.badGateway("Image synthesis pipeline returned empty output", "SYNTHESIS_FAILED");
     }
 
     // 3. Persist artifact record in MongoDB
@@ -143,8 +143,7 @@ exports.createPromptAndImage = async (req, res) => {
       imageUrl
     });
   } catch (error) {
-    console.error("Creation error:", error);
-    res.status(500).json({ error: error.message || "Failed to create prompt & image" });
+    next(error);
   }
 };
 
@@ -152,7 +151,7 @@ exports.createPromptAndImage = async (req, res) => {
  * @desc    Regenerate image from existing prompt with custom parameters
  * @route   POST /api/prompt/refine, /api/prompt/retry
  */
-exports.refinePromptImage = async (req, res) => {
+exports.refinePromptImage = async (req, res, next) => {
   const { 
     prompt, 
     resolution, 
@@ -164,8 +163,8 @@ exports.refinePromptImage = async (req, res) => {
     seed
   } = req.body;
 
-  if (!prompt) {
-    return res.status(400).json({ error: "Prompt string is required for refinement" });
+  if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    return next(ApiError.badRequest("Prompt string is required for refinement", "INVALID_INPUT"));
   }
 
   const startTime = Date.now();
@@ -183,7 +182,9 @@ exports.refinePromptImage = async (req, res) => {
       seed
     );
     
-    if (!imageUrl) throw new Error("Image generation failed");
+    if (!imageUrl) {
+      throw ApiError.badGateway("Image generation failed", "SYNTHESIS_FAILED");
+    }
     
     const artifact = await ArtifactModel.create({ 
       prompt, 
@@ -203,8 +204,7 @@ exports.refinePromptImage = async (req, res) => {
       imageUrl
     });
   } catch (error) {
-    console.error("Regeneration error:", error);
-    res.status(500).json({ error: "Failed to regenerate image" });
+    next(error);
   }
 };
 
@@ -212,20 +212,21 @@ exports.refinePromptImage = async (req, res) => {
  * @desc    Upscale an existing image
  * @route   POST /api/prompt/upscale
  */
-exports.upscaleImageHandler = async (req, res) => {
+exports.upscaleImageHandler = async (req, res, next) => {
   const { imageUrl, upscaleFactor } = req.body;
 
-  if (!imageUrl) {
-    return res.status(400).json({ error: "imageUrl is required for upscaling" });
+  if (!imageUrl || typeof imageUrl !== "string") {
+    return next(ApiError.badRequest("imageUrl is required for upscaling", "INVALID_INPUT"));
   }
 
   try {
     const enhancedUrl = await upscaleImage(imageUrl, upscaleFactor || 2);
-    if (!enhancedUrl) throw new Error("Upscaling service unavailable");
+    if (!enhancedUrl) {
+      throw ApiError.badGateway("Upscaling service unavailable", "UPSCALE_FAILED");
+    }
     res.status(200).json({ imageUrl: enhancedUrl });
   } catch (error) {
-    console.error("Upscale error:", error);
-    res.status(500).json({ error: "Failed to upscale image" });
+    next(error);
   }
 };
 
@@ -233,11 +234,11 @@ exports.upscaleImageHandler = async (req, res) => {
  * @desc    Real-time generation telemetry stream using Server-Sent Events (SSE)
  * @route   GET /api/prompt/stream
  */
-exports.createStreamGeneration = async (req, res) => {
+exports.createStreamGeneration = async (req, res, next) => {
   const { subject, action, style, context, resolution, complexity, modelId, seed } = req.query;
 
   if (!subject) {
-    return res.status(400).json({ error: "Subject parameter is required" });
+    return next(ApiError.badRequest("Subject parameter is required", "INVALID_INPUT"));
   }
 
   // Set HTTP headers for SSE streaming

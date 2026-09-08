@@ -1,5 +1,7 @@
 const mongoose = require("mongoose");
 const crypto = require("crypto");
+const { isLocalMode } = require("../utils/db");
+const { LocalGeneration } = require("../utils/localStore");
 
 const GenerationStatus = {
   QUEUED: "queued",
@@ -167,7 +169,20 @@ GenerationSchema.statics.atomicTransition = async function (generationId, allowe
   return await this.findOneAndUpdate(query, update, { new: true });
 };
 
+const MongooseGeneration = mongoose.models.Generation || mongoose.model("Generation", GenerationSchema);
+
+const Generation = new Proxy(MongooseGeneration, {
+  get(target, prop) {
+    if (isLocalMode()) {
+      if (prop in LocalGeneration) {
+        return LocalGeneration[prop];
+      }
+    }
+    return target[prop];
+  }
+});
+
 module.exports = {
-  Generation: mongoose.models.Generation || mongoose.model("Generation", GenerationSchema),
+  Generation,
   GenerationStatus
 };

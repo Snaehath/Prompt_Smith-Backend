@@ -1,5 +1,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const { isLocalMode } = require("../utils/db");
+const { LocalUser } = require("../utils/localStore");
 
 const UserSchema = new mongoose.Schema(
   {
@@ -23,4 +25,18 @@ UserSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-module.exports = mongoose.models.User || mongoose.model("User", UserSchema);
+const MongooseUser = mongoose.models.User || mongoose.model("User", UserSchema);
+
+const User = new Proxy(MongooseUser, {
+  get(target, prop) {
+    if (isLocalMode()) {
+      if (prop in LocalUser) {
+        return LocalUser[prop];
+      }
+    }
+    return target[prop];
+  }
+});
+
+User.User = User;
+module.exports = User;

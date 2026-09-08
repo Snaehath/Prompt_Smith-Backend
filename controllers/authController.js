@@ -1,51 +1,74 @@
 const User = require("../models/User");
 const { generateToken } = require("../utils/jwt");
+const ApiError = require("../utils/ApiError");
 
-// @desc    Register new user
-// @route   POST /api/auth/register
-exports.registerUser = async (req, res) => {
+/**
+ * @desc    Register new user
+ * @route   POST /api/auth/register
+ */
+exports.registerUser = async (req, res, next) => {
   const { name, email, password } = req.body;
 
   try {
-    const userExists = await User.findOne({ email });
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      throw ApiError.badRequest("Name is required", "INVALID_NAME");
+    }
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      throw ApiError.badRequest("A valid email address is required", "INVALID_EMAIL");
+    }
+    if (!password || typeof password !== "string" || password.length < 6) {
+      throw ApiError.badRequest("Password must be at least 6 characters long", "INVALID_PASSWORD");
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const userExists = await User.findOne({ email: normalizedEmail });
     if (userExists) {
-      return res.status(400).json({ message: "User already exists" });
+      throw ApiError.conflict("User with this email already exists", "USER_EXISTS");
     }
 
-    const user = await User.create({ name, email, password });
+    const user = await User.create({
+      name: name.trim(),
+      email: normalizedEmail,
+      password
+    });
 
-    if (user) {
-      res.status(201).json({
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        token: generateToken(user._id),
-      });
-    }
+    res.status(201).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      token: generateToken(user._id)
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
-// @desc    Auth user & get token
-// @route   POST /api/auth/login
-exports.loginUser = async (req, res) => {
+/**
+ * @desc    Authenticate user & retrieve token
+ * @route   POST /api/auth/login
+ */
+exports.loginUser = async (req, res, next) => {
   const { email, password } = req.body;
 
   try {
-    const user = await User.findOne({ email });
-
-    if (user && (await user.comparePassword(password))) {
-      res.json({
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        token: generateToken(user._id),
-      });
-    } else {
-      res.status(401).json({ message: "Invalid email or password" });
+    if (!email || !password || typeof email !== "string" || typeof password !== "string") {
+      throw ApiError.badRequest("Email and password are required", "INVALID_CREDENTIALS");
     }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user || !(await user.comparePassword(password))) {
+      throw ApiError.unauthorized("Invalid email or password", "AUTH_FAILED");
+    }
+
+    res.status(200).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      token: generateToken(user._id)
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };

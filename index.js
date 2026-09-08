@@ -23,12 +23,12 @@ app.use(globalLimiter);
 // Routes
 const authRoutes = require("./routes/authRoutes");
 const promptRoutes = require("./routes/promptRoutes");
-const promptNeuralRoute = require("./routes/promptRoute");
+const neuralRoutes = require("./routes/neuralRoutes");
 const generationRoutes = require("./routes/generationRoutes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/prompts", promptRoutes);
-app.use("/api/prompt", promptNeuralRoute);
+app.use("/api/prompt", neuralRoutes);
 app.use("/api/generations", generationRoutes);
 
 
@@ -44,15 +44,16 @@ app.get("/health/live", (req, res) => {
 
 app.get("/health/ready", (req, res) => {
   const mongoose = require("mongoose");
+  const { isLocalMode } = require("./utils/db");
   const providerRouter = require("./services/providerRouter");
-  const isDbConnected = mongoose.connection.readyState === 1;
+  const isReady = mongoose.connection.readyState === 1 || isLocalMode();
 
   const checks = {
-    database: isDbConnected ? "connected" : "disconnected",
+    database: mongoose.connection.readyState === 1 ? "connected (mongodb)" : "local_file_store (temporary until Postgres)",
     circuits: providerRouter.getCircuitStatus()
   };
 
-  if (!isDbConnected) {
+  if (!isReady) {
     return res.status(503).json({
       status: "degraded",
       message: "Database connection not ready",

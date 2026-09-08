@@ -106,6 +106,37 @@ class NvidiaAdapter {
 
     return error;
   }
+
+  async upscaleImage(imageUrl, factor = 2) {
+    const apiKey = process.env.NVIDIA_API_KEY;
+    if (!apiKey) return null;
+
+    const UPSCALE_URL = "https://ai.api.nvidia.com/v1/genai/nvidia/super-resolution";
+    const payload = {
+      image: imageUrl.split(",")[1] || imageUrl,
+      upscale_factor: factor
+    };
+
+    try {
+      const response = await fetch(UPSCALE_URL, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "Accept": "application/json"
+        }
+      });
+
+      if (!response.ok) return null;
+      const data = await response.json();
+      return `data:image/png;base64,${data.image || data.b64_json}`;
+    } catch (error) {
+      console.error("NVIDIA upscaling error:", error.message);
+      return null;
+    }
+  }
 }
 
 module.exports = new NvidiaAdapter();
+

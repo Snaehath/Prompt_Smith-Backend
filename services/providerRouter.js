@@ -101,6 +101,13 @@ class ProviderRouter {
     }, fallbackToPollinations);
   }
 
+  /**
+   * Super-resolution / Upscale an existing image
+   */
+  async upscaleImage(imageUrl, factor = 2) {
+    return await nvidiaAdapter.upscaleImage(imageUrl, factor);
+  }
+
   getCircuitStatus() {
     return {
       nvidia: this.nvidiaBreaker.getStatus()

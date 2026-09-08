@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { isLocalMode } = require("../utils/db");
+const { LocalArtifact } = require("../utils/localStore");
 
 const ArtifactSchema = new mongoose.Schema(
   {
@@ -23,4 +25,18 @@ const ArtifactSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.models.Artifact || mongoose.model("Artifact", ArtifactSchema);
+const MongooseArtifact = mongoose.models.Artifact || mongoose.model("Artifact", ArtifactSchema);
+
+const Artifact = new Proxy(MongooseArtifact, {
+  get(target, prop) {
+    if (isLocalMode()) {
+      if (prop in LocalArtifact) {
+        return LocalArtifact[prop];
+      }
+    }
+    return target[prop];
+  }
+});
+
+Artifact.Artifact = Artifact;
+module.exports = Artifact;

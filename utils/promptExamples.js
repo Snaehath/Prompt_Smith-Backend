@@ -1,4 +1,4 @@
-export const promptExamples = `
+const promptExamples = `
 =====================
 BAD vs. GOOD EXAMPLES
 =====================
@@ -122,3 +122,5 @@ Urban skyline glowing with neon reflections, rain-slicked streets and cinematic 
 
 ---
 `;
+
+module.exports = { promptExamples };

@@ -1,85 +1,36 @@
 const express = require("express");
 const router = express.Router();
-const { chatWithGemini } = require("../services/geminiService");
-const { promptSchema } = require("../schemas/promptSchema");
-const { generateImage } = require("../services/nvidiaService");
 const {
-  GENERATE_PROMPT_SYSTEM,
-  GENERATE_PROMPT_USER,
-  IMAGE_QUALITY_SYSTEM,
-  RETRY_QUALITY_SYSTEM,
-} = require("../utils/prompts");
+  listModels,
+  getArchive,
+  expandPromptBlueprint,
+  createPromptAndImage,
+  refinePromptImage,
+  upscaleImageHandler,
+  createStreamGeneration
+} = require("../controllers/neuralController");
+const { optionalProtect } = require("../middleware/authMiddleware");
+const { aiRateLimiter } = require("../middleware/rateLimiter");
 
-// # expand prompt (Gemini only)
-router.post("/expand", async (req, res) => {
-  const { subject, action, style, context, complexity } = req.body;
+// Model Discovery
+router.get("/models", listModels);
 
-  const userText = GENERATE_PROMPT_USER(
-    subject,
-    action,
-    style,
-    context,
-    complexity || 3
-  );
+// Neural Archive (associates with logged in user if token present)
+router.get("/archive", optionalProtect, getArchive);
 
-  try {
-    const result = await chatWithGemini(
-      GENERATE_PROMPT_SYSTEM,
-      userText,
-      promptSchema
-    );
-    res.status(200).json(result);
-  } catch (error) {
-    console.error("Expansion error:", error);
-    res.status(500).json({ error: "Failed to expand prompt" });
-  }
-});
+// Blueprint Expansion (Gemini reasoning)
+router.post("/expand", aiRateLimiter, expandPromptBlueprint);
 
-// # create prompt (Full Flow - Gemini + NVIDIA)
-router.post("/create", async (req, res) => {
-  const { subject, action, style, context, resolution, complexity } = req.body;
-  
-  const userText = GENERATE_PROMPT_USER(
-    subject,
-    action, 
-    style, 
-    context,
-    complexity || 3
-  );
+// Full Synthesis Pipeline (Gemini + FLUX)
+router.post("/create", aiRateLimiter, optionalProtect, createPromptAndImage);
 
-  try {
-    // Gemini handles the expansion (User Prompt) using System Instructions
-    const result = await chatWithGemini(GENERATE_PROMPT_SYSTEM, userText, promptSchema);
-    
-    // NVIDIA handles image generation (NVIDIA System Prompt + Gemini's Result)
-    const imageUrl = await generateImage(result.prompt, resolution, IMAGE_QUALITY_SYSTEM);
-    
-    res.status(200).json({ ...result, imageUrl });
-  } catch (error) {
-    console.error("Creation error:", error);
-    res.status(500).json({ error: "Failed to create prompt" });
-  }
-});
+// Real-Time Progress Stream (Server-Sent Events)
+router.get("/stream", aiRateLimiter, optionalProtect, createStreamGeneration);
 
-/**
- * Regeneration / Retry Endpoint
- * Skips Gemini to avoid redundant logic once a blueprint exists.
- * Just calls NVIDIA with the specialized retry system prompt.
- */
-router.post(["/refine", "/retry"], async (req, res) => {
-  const { prompt, resolution, title } = req.body;
+// Image Regeneration / Retry
+router.post(["/refine", "/retry"], aiRateLimiter, optionalProtect, refinePromptImage);
 
-  try {
-    // Regenerate image using existing prompt + high-fidelity retry system
-    const imageUrl = await generateImage(prompt, resolution, RETRY_QUALITY_SYSTEM);
-    
-    if (!imageUrl) throw new Error("Image generation failed");
-    
-    res.status(200).json({ prompt, imageUrl, title });
-  } catch (error) {
-    console.error("Regeneration error:", error);
-    res.status(500).json({ error: "Failed to regenerate image" });
-  }
-});
+// Super-Resolution / Upscale
+router.post("/upscale", aiRateLimiter, upscaleImageHandler);
 
 module.exports = router;

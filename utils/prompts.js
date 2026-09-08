@@ -1,4 +1,5 @@
 // # ai system prompts
+const { promptExamples } = require("./promptExamples");
 
 // # art director system prompts
 // This engine converts 4 minimal inputs into professional-grade AI image prompts.
@@ -21,9 +22,14 @@ STRATEGY:
 - If Purpose involves "Game", "Asset", "Sprite", "UI", or "Icon": Use the TECHNICAL SPECIFICATION layout for the final prompt.
 - If Purpose involves "Character", "Illustration", "Scene", or "Wallpaper": Use THEMATIC NARRATIVE layout for the final prompt.
 
+FEW-SHOT EXCELLENCE BENCHMARKS (Learn from these standards):
+${promptExamples}
+
 CONSTRAINTS:
-- Use professional art and photography terminology.
+- Use professional art, cinematography, and photography terminology.
 - Be descriptive, sensory, and evocative.
+- Avoid banned buzzwords: do NOT use "hyperrealistic", "photorealistic", "4k", "8k", "trending on artstation". Instead describe actual lighting, textures, optical lenses, and materials.
+- CRITICAL: The 'prompt' field MUST NOT exceed 600 characters. Keep it high-density but concise.
 - Return the Master Blueprint in the MUST-FOLLOW JSON format.
 `;
 
@@ -35,7 +41,7 @@ Pillars for the artwork:
 4. Context: ${context || "[To be analyzed from Subject description]"}
 5. Complexity Level: ${complexity}/5
 
-Synthesize these into a master prompt. The length and detail density should scale directly with the Complexity Level. At Level 5, provide an exhaustive architectural breakdown.
+Synthesize these into a master prompt. The detail density should scale with the Complexity Level, but the final output MUST be under 600 characters to maintain neural link stability.
 `;
 
 const IMAGE_QUALITY_SYSTEM = "masterpiece, 4k resolution, highly detailed, ultra-sharp focus, professional lighting, cinematic composition";

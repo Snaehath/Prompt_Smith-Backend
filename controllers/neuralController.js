@@ -27,14 +27,29 @@ exports.listModels = (req, res) => {
  * @desc    Get synthesis archive history
  * @route   GET /api/prompt/archive
  */
-exports.getArchive = async (req, res) => {
+exports.getArchive = async (req, res, next) => {
   try {
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const skip = (page - 1) * limit;
+
     const query = req.user ? { $or: [{ userId: req.user._id }, { userId: null }] } : {};
-    const artifacts = await ArtifactModel.find(query).sort({ createdAt: -1 }).limit(50);
-    res.status(200).json(artifacts);
+    const [artifacts, total] = await Promise.all([
+      ArtifactModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).select("-__v"),
+      ArtifactModel.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      items: artifacts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
-    console.error("Archive fetch error:", error);
-    res.status(500).json({ error: "Failed to fetch neural archive" });
+    next(error);
   }
 };
 

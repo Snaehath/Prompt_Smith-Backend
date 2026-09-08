@@ -9,9 +9,10 @@ const {
 } = require("../controllers/generationController");
 const { optionalProtect } = require("../middleware/authMiddleware");
 const { aiRateLimiter } = require("../middleware/rateLimiter");
+const { validateGenerationInput } = require("../middleware/validateInput");
 
-// Create generation job (Idempotent, decoupled from stream)
-router.post("/", aiRateLimiter, optionalProtect, createGeneration);
+// Create generation job (Idempotent, validated, decoupled from stream)
+router.post("/", aiRateLimiter, optionalProtect, validateGenerationInput, createGeneration);
 
 // List past generation jobs (Paginated)
 router.get("/", optionalProtect, listGenerations);

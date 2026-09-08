@@ -1,93 +1,111 @@
 const Prompt = require("../models/Prompt");
+const ApiError = require("../utils/ApiError");
 
-// @desc    Create a new prompt
+// @desc    Create a new prompt template
 // @route   POST /api/prompts
-exports.createPrompt = async (req, res) => {
+exports.createPrompt = async (req, res, next) => {
   const { title, rawContent, variables, category, tags } = req.body;
 
   try {
+    if (!title || typeof title !== "string" || title.trim().length === 0) {
+      throw ApiError.badRequest("Title is required", "INVALID_TITLE");
+    }
+    if (!rawContent || typeof rawContent !== "string" || rawContent.trim().length === 0) {
+      throw ApiError.badRequest("Raw content is required", "INVALID_CONTENT");
+    }
+
     const prompt = await Prompt.create({
-      title,
-      rawContent,
-      variables,
-      category,
-      tags,
+      title: title.trim(),
+      rawContent: rawContent.trim(),
+      variables: Array.isArray(variables) ? variables : [],
+      category: category ? category.trim() : "General",
+      tags: Array.isArray(tags) ? tags : [],
       userId: req.user._id,
-      versions: [{ content: rawContent }],
+      versions: [{ content: rawContent.trim() }]
     });
 
     res.status(201).json(prompt);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
-// @desc    Get all user prompts
+// @desc    Get all user prompts (Paginated)
 // @route   GET /api/prompts
-exports.getPrompts = async (req, res) => {
+exports.getPrompts = async (req, res, next) => {
   try {
-    const prompts = await Prompt.find({ userId: req.user._id }).sort({ updatedAt: -1 });
-    res.json(prompts);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const skip = (page - 1) * limit;
+
+    const filter = { userId: req.user._id };
+
+    const [prompts, total] = await Promise.all([
+      Prompt.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).select("-__v"),
+      Prompt.countDocuments(filter)
+    ]);
+
+    res.status(200).json({
+      items: prompts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
-// @desc    Update a prompt (creates a new version)
+// @desc    Update a prompt (Creates a new version in history)
 // @route   PUT /api/prompts/:id
-exports.updatePrompt = async (req, res) => {
-  const { title, rawContent, variables, category, tags, parameters } = req.body;
+exports.updatePrompt = async (req, res, next) => {
+  const { title, rawContent, variables, category, tags } = req.body;
 
   try {
-    const prompt = await Prompt.findById(req.params.id);
+    // Atomic ownership check preventing IDOR
+    const prompt = await Prompt.findOne({ _id: req.params.id, userId: req.user._id });
 
     if (!prompt) {
-      return res.status(404).json({ message: "Prompt not found" });
+      throw ApiError.notFound("Prompt not found or access denied", "PROMPT_NOT_FOUND");
     }
 
-    if (prompt.userId.toString() !== req.user._id.toString()) {
-      return res.status(401).json({ message: "User not authorized" });
+    // Push previous state into version history before updating
+    if (rawContent && rawContent !== prompt.rawContent) {
+      prompt.versions.push({
+        content: prompt.rawContent,
+        createdAt: new Date()
+      });
+      prompt.rawContent = rawContent.trim();
     }
 
-    // Push current state to versions history before updating
-    const newVersion = {
-      content: prompt.rawContent,
-      createdAt: new Date(),
-    };
-
-    prompt.title = title || prompt.title;
-    prompt.rawContent = rawContent || prompt.rawContent;
-    prompt.variables = variables || prompt.variables;
-    prompt.category = category || prompt.category;
-    prompt.tags = tags || prompt.tags;
-    
-    // Add the previous state to history
-    prompt.versions.push(newVersion);
+    if (title) prompt.title = title.trim();
+    if (variables) prompt.variables = variables;
+    if (category) prompt.category = category.trim();
+    if (tags) prompt.tags = tags;
 
     const updatedPrompt = await prompt.save();
-    res.json(updatedPrompt);
+    res.status(200).json(updatedPrompt);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // @desc    Delete a prompt
 // @route   DELETE /api/prompts/:id
-exports.deletePrompt = async (req, res) => {
+exports.deletePrompt = async (req, res, next) => {
   try {
-    const prompt = await Prompt.findById(req.params.id);
+    // Atomic ownership check preventing IDOR
+    const prompt = await Prompt.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
 
     if (!prompt) {
-      return res.status(404).json({ message: "Prompt not found" });
+      throw ApiError.notFound("Prompt not found or access denied", "PROMPT_NOT_FOUND");
     }
 
-    if (prompt.userId.toString() !== req.user._id.toString()) {
-      return res.status(401).json({ message: "User not authorized" });
-    }
-
-    await prompt.deleteOne();
-    res.json({ message: "Prompt removed" });
+    res.status(200).json({ message: "Prompt removed successfully" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };

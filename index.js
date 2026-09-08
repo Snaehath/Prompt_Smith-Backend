@@ -32,14 +32,48 @@ app.use("/api/prompt", promptNeuralRoute);
 app.use("/api/generations", generationRoutes);
 
 
-// System Health & Status
+// System Health & Observability Probes
+app.get("/health/live", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "promptsmith-backend",
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get("/health/ready", (req, res) => {
+  const mongoose = require("mongoose");
+  const providerRouter = require("./services/providerRouter");
+  const isDbConnected = mongoose.connection.readyState === 1;
+
+  const checks = {
+    database: isDbConnected ? "connected" : "disconnected",
+    circuits: providerRouter.getCircuitStatus()
+  };
+
+  if (!isDbConnected) {
+    return res.status(503).json({
+      status: "degraded",
+      message: "Database connection not ready",
+      checks
+    });
+  }
+
+  res.status(200).json({
+    status: "ready",
+    uptimeSeconds: Math.floor(process.uptime()),
+    checks
+  });
+});
+
 app.get("/api/status", (req, res) => {
   res.json({ 
     status: "online", 
-    version: "2.1.0",
-    service: "PromptSmith AI Gateway",
+    version: "2.2.0",
+    service: "PromptSmith Production AI Gateway",
     requestId: req.id,
-    features: ["Gemini-Reasoning", "NVIDIA-FLUX", "Pollinations-Failover", "SSE-Streaming"]
+    features: ["Gemini-Reasoning", "NVIDIA-FLUX", "Pollinations-Failover", "Async-Job-Queue", "SSE-Telemetry", "Circuit-Breaker"]
   });
 });
 

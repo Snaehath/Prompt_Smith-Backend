@@ -1,6 +1,6 @@
-# 🛠️ PromptSmith Backend API & Frontend Integration Guide
+# 🛠️ PromptSmith Production AI Gateway & Integration Guide
 
-> **PromptSmith** is a production-grade, fault-tolerant Generative AI orchestration gateway. It combines Google Gemini's reasoning engine (with few-shot art direction benchmarks) to expand raw ideas into structured visual blueprints, coupled with an NVIDIA FLUX / Pollinations multi-provider vision pipeline and real-time Server-Sent Events (SSE) telemetry.
+> **PromptSmith** is an enterprise-grade Generative AI orchestration gateway. It decouples generation job creation from real-time telemetry streaming, protects external provider quotas via an automated Three-State Circuit Breaker (`CLOSED`, `OPEN`, `HALF_OPEN`), enforces request idempotency, and delivers real-time progress via safe Server-Sent Events (SSE).
 
 ---
 
@@ -8,83 +8,117 @@
 1. [Architecture & System Design](#-architecture--system-design)
 2. [Environment Configuration](#-environment-configuration)
 3. [Model Registry & Providers](#-model-registry--providers)
-4. [API Endpoints Reference](#-api-endpoints-reference)
-   - [System & Health](#system--health)
-   - [Authentication](#authentication)
-   - [Neural Synthesis & Generation](#neural-synthesis--generation)
-   - [Real-Time SSE Telemetry Stream](#real-time-sse-telemetry-stream)
-   - [Prompt Library CRUD](#prompt-library-crud)
-5. [Next.js Frontend Integration](#-nextjs-frontend-integration)
-   - [TypeScript Types & Interfaces](#typescript-types--interfaces)
-   - [Standard API Client](#standard-api-client)
-   - [Real-Time Streaming Hook (`usePromptStream`)](#real-time-streaming-hook)
-6. [Resilience & Failover Gateway](#-resilience--failover-gateway)
-7. [Production Hardening & Security](#-production-hardening--security)
-8. [Resume & Portfolio Highlights](#-resume--portfolio-highlights)
+4. [Asynchronous Generation Lifecycle](#-asynchronous-generation-lifecycle)
+5. [API Endpoints Reference](#-api-endpoints-reference)
+   - [Health & Observability Probes](#1-health--observability-probes)
+   - [Asynchronous Generation Job API](#2-asynchronous-generation-job-api)
+   - [Neural Expansion (Synchronous Blueprint)](#3-neural-expansion-synchronous-blueprint)
+   - [Prompt Library CRUD (Protected)](#4-prompt-library-crud-protected)
+6. [Frontend Integration Contract (Next.js / TypeScript)](#-frontend-integration-contract-nextjs)
+   - [TypeScript Interfaces](#typescript-interfaces)
+   - [Asynchronous Generation Hook (`useGenerationJob`)](#asynchronous-generation-hook-usegenerationjob)
+7. [Resilience: Three-State Circuit Breaker](#-resilience-three-state-circuit-breaker)
+8. [Error Handling Contract](#-error-handling-contract)
+9. [Resume & Engineering Showcase Highlights](#-resume--engineering-showcase-highlights)
 
 ---
 
 ## 🏗️ Architecture & System Design
 
 ```
-backend/
-├── controllers/          # Business logic handlers
-│   ├── authController.js    # Registration & login
-│   ├── promptController.js  # User-saved prompt CRUD library
-│   └── neuralController.js  # Gemini expansion, image synthesis & SSE streams
-├── middleware/           # Middlewares
-│   ├── authMiddleware.js    # JWT protection & optional guest authentication
-│   └── rateLimiter.js       # Multi-tier rate limiting (global + AI-specific)
-├── models/               # MongoDB Mongoose schemas
-│   ├── User.js              # User credentials & bcrypt hashing
-│   ├── Prompt.js            # User prompt templates with version history & variables
-│   └── Artifact.js          # Synthesized art blueprints & generation metadata
-├── routes/               # Express route declarations
-│   ├── authRoutes.js        # /api/auth
-│   ├── promptRoute.js       # /api/prompt (Neural expansion, synthesis & streams)
-│   └── promptRoutes.js      # /api/prompts (User saved prompt templates)
-├── schemas/              # Structured JSON schemas for AI outputs
-│   └── promptSchema.js      # Strict Gemini JSON response schema
-├── services/             # External AI provider adapters
-│   ├── geminiService.js     # Google GenAI SDK (Gemini 2.5/3 with model fallback)
-│   ├── nvidiaService.js     # NVIDIA NIM FLUX + Pollinations failover gateway
-│   └── modelRegistry.js     # Engine metadata & model discovery
-├── utils/                # Database & prompt engineering
-│   ├── db.js                # MongoDB Mongoose connection
-│   ├── jwt.js               # JWT signer
-│   ├── prompts.js           # Art director system prompt with few-shot injection
-│   └── promptExamples.js   # Few-shot prompt engineering exemplars
-├── index.js              # Server entry point (Helmet, CORS, Error Handlers)
-└── package.json
+                          ┌──────────────────────────┐
+                          │   Client Application     │
+                          └─────────────┬────────────┘
+                                        │
+                         POST /api/generations (Idempotent)
+                                        │
+                                        ▼
+                          ┌──────────────────────────┐
+                          │   Generation Controller  │
+                          └─────────────┬────────────┘
+                                        │
+                                ┌───────┴───────┐
+                                │ Enqueue Job   │
+                                ▼               ▼
+                      ┌──────────────────┐  ┌─────────────────────┐
+                      │ MongoDB Record   │  │  GenerationQueue    │
+                      │ (Status: QUEUED) │  │  (Concurrency: 4)   │
+                      └──────────────────┘  └──────────┬──────────┘
+                                                       │
+                                              Job Worker Thread
+                                                       │
+                           ┌───────────────────────────┴───────────────────────────┐
+                           │                                                       │
+                           ▼                                                       ▼
+                ┌─────────────────────┐                                 ┌─────────────────────┐
+                │ Gemini Reasoning    │ (Few-shot expansion)            │ ProviderRouter      │
+                └──────────┬──────────┘                                 └──────────┬──────────┘
+                           │                                                       │
+                           ▼                                                       ▼
+                Structured Blueprint                                    ┌─────────────────────┐
+                                                                        │ Circuit Breaker     │
+                                                                        │ CLOSED/OPEN/HALF    │
+                                                                        └──────────┬──────────┘
+                                                                                   │
+                                                                       ┌───────────┴───────────┐
+                                                                       ▼                       ▼
+                                                                Primary: NVIDIA       Failover: Pollinations
+                                                                       │                       │
+                                                                       └───────────┬───────────┘
+                                                                                   │
+                                                                            Image Synthesis
+                                                                                   │
+                                                                                   ▼
+                                                                        Emit SSE 'complete' Event
+                                                                                   │
+                                                                                   ▼
+                                                                        Close Client Stream
 ```
 
 ---
 
 ## ⚙️ Environment Configuration
 
-Create or verify `.env` in the `backend/` directory:
+Configure `.env` in the `backend/` directory:
 
 ```env
 PORT=5000
 MONGODB_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/promptsmith?retryWrites=true&w=majority
 JWT_SECRET=your_super_secret_jwt_key
 GEMINI_API_KEY=AIzaSy...
-NVIDIA_API_KEY=nvapi-... # Optional: if omitted/exhausted, gateway automatically routes to Pollinations
+NVIDIA_API_KEY=nvapi-... # Optional: If missing/exhausted, circuit router automatically routes to Pollinations
 ```
 
 ---
 
 ## 🧠 Model Registry & Providers
 
-Query `GET /api/prompt/models` to retrieve dynamically supported engines:
+Query `GET /api/prompt/models` to retrieve available engines:
 
-| Model ID | Provider | Steps | Default | Role |
+| Model ID | Provider | Steps | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | **`flux-1-dev`** | NVIDIA NIM | 50 | ✅ Yes | Premium ultra-high-fidelity generation |
 | **`flux-1-schnell`** | NVIDIA NIM | 4 | No | Fast generation |
-| **`flux-2-klein`** | NVIDIA NIM | 4 | No | Next-generation lightweight architecture |
+| **`flux-2-klein`** | NVIDIA NIM | 4 | No | Compact next-generation architecture |
 | **`pollinations-flux`** | Pollinations AI | Auto | No | Free, zero-key FLUX cloud inference engine |
 | **`pollinations-turbo`** | Pollinations AI | Auto | No | Real-time SDXL-Turbo image synthesis |
+
+---
+
+## 🔄 Asynchronous Generation Lifecycle
+
+The generation pipeline is split into **Job Creation** and **Telemetry Listening**:
+
+1. **Job Creation (`POST /api/generations`)**: Validates parameters, checks `Idempotency-Key` (preventing duplicate billing/renders on retry), creates the job record in MongoDB, and enqueues it. Returns `{ jobId, status: "queued", eventsUrl }` immediately.
+2. **Telemetry Stream (`GET /api/generations/:id/events`)**: Connects to pure read-only Server-Sent Events (SSE). Reconnecting to this endpoint **NEVER** re-triggers generation.
+3. **Cancellation (`POST /api/generations/:id/cancel`)**: Aborts the job via `AbortController`, terminates in-flight network requests to NVIDIA/Pollinations, and transitions state to `cancelled`.
+
+### State Transitions:
+```
+[queued] ➔ [running] ➔ [blueprinting] ➔ [rendering] ➔ [archiving] ➔ [completed]
+   │           │               │              │             │
+   └───────────┴───────────────┴──────────────┴─────────────┴──➔ [cancelled] / [failed]
+```
 
 ---
 
@@ -92,164 +126,177 @@ Query `GET /api/prompt/models` to retrieve dynamically supported engines:
 
 Base URL: `http://localhost:5000`
 
-### System & Health
+### 1. Health & Observability Probes
 
-#### `GET /api/status`
+#### `GET /health/live`
+Lightweight liveness probe for load balancers.
 - **Response (200 OK):**
   ```json
   {
-    "status": "online",
-    "version": "2.1.0",
-    "service": "PromptSmith AI Gateway",
-    "features": ["Gemini-Reasoning", "NVIDIA-FLUX", "Pollinations-Failover", "SSE-Streaming"]
+    "status": "ok",
+    "service": "promptsmith-backend",
+    "uptimeSeconds": 142,
+    "timestamp": "2026-09-08T11:00:00.000Z"
+  }
+  ```
+
+#### `GET /health/ready`
+Deep readiness probe checking database connectivity and circuit breaker status.
+- **Response (200 OK / 503 Degraded):**
+  ```json
+  {
+    "status": "ready",
+    "uptimeSeconds": 142,
+    "checks": {
+      "database": "connected",
+      "circuits": {
+        "nvidia": {
+          "name": "nvidia-nim",
+          "state": "CLOSED",
+          "failureCount": 0,
+          "cooldownMs": 60000
+        }
+      }
+    }
   }
   ```
 
 ---
 
-### Authentication
+### 2. Asynchronous Generation Job API
 
-#### `POST /api/auth/register`
-- **Body:** `{ "name": "Alex", "email": "alex@example.com", "password": "Password123" }`
-- **Response (201 Created):** `{ "_id": "...", "name": "Alex", "email": "...", "token": "..." }`
+#### `POST /api/generations`
+Creates an asynchronous generation job.
+- **Headers:**
+  - `Content-Type: application/json`
+  - `Idempotency-Key: <unique-uuid>` *(Recommended to prevent duplicate billing)*
+  - `Authorization: Bearer <token>` *(Optional: associates job with user account)*
+- **Body:**
+  ```json
+  {
+    "subject": "Cyberpunk Ronin",
+    "action": "drawing a plasma katana in the rain",
+    "style": "Cinematic neo-Tokyo realism",
+    "context": "Dark alley reflecting neon puddles",
+    "complexity": 4,
+    "resolution": "16:9",
+    "modelId": "flux-1-dev",
+    "seed": 42198
+  }
+  ```
+- **Response (201 Created):**
+  ```json
+  {
+    "jobId": "67ce1a0f8b72...",
+    "status": "queued",
+    "stage": "queued",
+    "progress": 0,
+    "eventsUrl": "/api/generations/67ce1a0f8b72.../events"
+  }
+  ```
 
-#### `POST /api/auth/login`
-- **Body:** `{ "email": "alex@example.com", "password": "Password123" }`
-- **Response (200 OK):** `{ "_id": "...", "name": "Alex", "email": "...", "token": "..." }`
+#### `GET /api/generations/:id/events`
+Server-Sent Events (SSE) telemetry stream for a generation job.
+- **Connection Details:**
+  - Emits monotonic event IDs (`id: 1`, `id: 2`, ...)
+  - Automatically sends `: heartbeat` ping every 15s to keep connection alive.
+  - Sends immediate snapshot if connecting after job already started or finished.
+- **Event Output Format:**
+  ```http
+  id: 1
+  event: stage
+  data: {"generationId":"...","stage":"blueprint_synthesis","progress":20,"message":"Expanding visual blueprint with Gemini reasoning engine..."}
+
+  id: 2
+  event: blueprint
+  data: {"title":"Neon Ronin Awakening","prompt":"Full-body portrait of a cyborg samurai..."}
+
+  id: 3
+  event: stage
+  data: {"generationId":"...","stage":"visual_rendering","progress":50,"message":"Synthesizing canvas using flux-1-dev engine..."}
+
+  id: 4
+  event: stage
+  data: {"generationId":"...","stage":"archiving","progress":85,"message":"Persisting blueprint and image artifacts..."}
+
+  id: 5
+  event: complete
+  data: {"generationId":"...","status":"completed","progress":100,"imageUrl":"data:image/jpeg;base64,...","durationMs":6820}
+  ```
+
+#### `POST /api/generations/:id/cancel`
+Aborts an in-flight or queued generation job.
+- **Response (200 OK):**
+  ```json
+  {
+    "jobId": "67ce1a0f8b72...",
+    "status": "cancelled",
+    "success": true
+  }
+  ```
+
+#### `GET /api/generations/:id`
+Polling fallback endpoint returning full job state document.
+
+#### `GET /api/generations?page=1&limit=20`
+Paginated generation history for user or guest sessions.
 
 ---
 
-### Neural Synthesis & Generation
-
-#### `GET /api/prompt/models`
-Returns array of available models.
-
-#### `GET /api/prompt/archive`
-Fetches synthesized historical prompts & artifacts.
-- **Optional Header:** `Authorization: Bearer <token>` (if provided, filters to user's artifacts).
+### 3. Neural Expansion (Synchronous Blueprint)
 
 #### `POST /api/prompt/expand`
 Transforms 4 raw inputs into a master art director blueprint using Gemini few-shot reasoning.
-- **Body:**
-  ```json
-  {
-    "subject": "Neon Cyberpunk Samurai",
-    "action": "unsheathing a plasma katana in rain",
-    "style": "Cinematic neo-Tokyo realism",
-    "context": "Dark narrow alley reflecting neon lights in puddles",
-    "complexity": 4
-  }
-  ```
-- **Response (200 OK):**
-  ```json
-  {
-    "title": "Neon Ronin Awakening",
-    "subject": "Cybernetic samurai with chrome armor",
-    "action": "Unsheathing glowing plasma katana",
-    "style": "Cinematic anamorphic neo-Tokyo realism",
-    "context": "Rain-slicked alleyway drenched in cobalt reflections",
-    "description": "High-tension action scene of an urban cyber-warrior.",
-    "prompt": "Full-body cinematic portrait of an armored cyborg samurai..."
-  }
-  ```
-
-#### `POST /api/prompt/create`
-Full pipeline: Expands prompt blueprint, synthesizes image (NVIDIA / Pollinations), and indexes artifact in database.
-- **Optional Header:** `Authorization: Bearer <token>`
-- **Body:**
-  ```json
-  {
-    "subject": "Cyberpunk samurai",
-    "action": "drawing a plasma katana in the rain",
-    "style": "Cinematic neo-Tokyo realism",
-    "context": "Neon alleyway",
-    "resolution": "16:9",
-    "complexity": 4,
-    "modelId": "flux-1-dev"
-  }
-  ```
-- **Response (200 OK):**
-  ```json
-  {
-    "_id": "67ce1a...",
-    "title": "Neon Ronin Awakening",
-    "prompt": "Full-body cinematic portrait...",
-    "modelId": "flux-1-dev",
-    "imageUrl": "data:image/jpeg;base64,...",
-    "resolution": "16:9",
-    "createdAt": "2026-09-08T10:45:00.000Z"
-  }
-  ```
-
-#### `POST /api/prompt/refine` (or `/api/prompt/retry`)
-Synthesizes a variation from existing prompt text with custom seed/steps.
-- **Body:**
-  ```json
-  {
-    "prompt": "Full-body cinematic portrait...",
-    "resolution": "16:9",
-    "modelId": "pollinations-flux",
-    "seed": 928374
-  }
-  ```
+- **Body:** `{ "subject": "Cyberpunk Ronin", "complexity": 4 }`
+- **Response (200 OK):** Blueprint JSON with title, prompt, description.
 
 ---
 
-### Real-Time SSE Telemetry Stream
+### 4. Prompt Library CRUD (Protected)
 
-#### `GET /api/prompt/stream`
-Stream generation progress stages directly to the client via **Server-Sent Events (SSE)**.
-- **Query Parameters:**
-  - `subject`: string (required)
-  - `action`: string (optional)
-  - `style`: string (optional)
-  - `context`: string (optional)
-  - `resolution`: string (default `"16:9"`)
-  - `complexity`: number (1-5)
-  - `modelId`: string (e.g. `"flux-1-dev"`, `"pollinations-flux"`)
-- **Event Stream Output:**
-  ```http
-  event: stage
-  data: {"stage":"blueprint_synthesis","progress":25,"message":"Analyzing creative pillars and crafting neural blueprint..."}
-
-  event: blueprint
-  data: {"title":"...","prompt":"...","description":"..."}
-
-  event: stage
-  data: {"stage":"visual_rendering","progress":65,"message":"Synthesizing canvas with flux-1-dev engine..."}
-
-  event: stage
-  data: {"stage":"archiving","progress":90,"message":"Indexing artwork into neural archive..."}
-
-  event: complete
-  data: {"_id":"...","title":"...","prompt":"...","imageUrl":"data:image/jpeg;base64,..."}
-  ```
+Requires `Authorization: Bearer <token>`
+- `GET /api/prompts?page=1&limit=20`: User saved prompt templates.
+- `POST /api/prompts`: Save a new prompt template.
+- `PUT /api/prompts/:id`: Update prompt (creates version history record; IDOR protected).
+- `DELETE /api/prompts/:id`: Delete prompt (IDOR protected).
 
 ---
 
-### Prompt Library CRUD
+## 💻 Frontend Integration Contract (Next.js)
 
-All requests require: `Authorization: Bearer <token>`
-- `GET /api/prompts`: Fetch user's saved prompt library.
-- `POST /api/prompts`: Save a new prompt template with `{{variables}}`.
-- `PUT /api/prompts/:id`: Update prompt (pushes current content to `versions[]` automatically).
-- `DELETE /api/prompts/:id`: Delete a saved prompt.
+### TypeScript Interfaces
 
----
-
-## 💻 Next.js Frontend Integration
-
-### TypeScript Types & Interfaces
-
-Save in `types/promptsmith.ts`:
+Save as `types/generation.ts`:
 
 ```typescript
-export interface ModelItem {
-  id: string;
-  label: string;
-  provider: "nvidia" | "pollinations";
-  description: string;
-  isDefault?: boolean;
+export type GenerationStatus =
+  | "queued"
+  | "running"
+  | "blueprinting"
+  | "rendering"
+  | "archiving"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface CreateGenerationPayload {
+  subject: string;
+  action?: string;
+  style?: string;
+  context?: string;
+  complexity?: number;
+  resolution?: "16:9" | "1:1" | "9:16" | "1080x1920" | "1920x1080";
+  modelId?: string;
+  seed?: number;
+}
+
+export interface GenerationJobResponse {
+  jobId: string;
+  status: GenerationStatus;
+  stage: string;
+  progress: number;
+  eventsUrl: string;
+  isDuplicate?: boolean;
 }
 
 export interface PromptBlueprint {
@@ -262,183 +309,222 @@ export interface PromptBlueprint {
   prompt: string;
 }
 
-export interface GenerationResult extends PromptBlueprint {
-  _id: string;
-  modelId: string;
-  resolution: string;
+export interface GenerationCompleteEvent {
+  generationId: string;
+  status: "completed";
+  progress: 100;
   imageUrl: string;
-  createdAt: string;
-}
-
-export interface StreamStageEvent {
-  stage: "blueprint_synthesis" | "visual_rendering" | "archiving";
-  progress: number;
-  message: string;
+  blueprint: PromptBlueprint;
+  durationMs: number;
 }
 ```
 
-### Standard API Client
+### Asynchronous Generation Hook (`useGenerationJob`)
 
-Save in `lib/api.ts`:
-
-```typescript
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
-
-export async function fetchAvailableModels(): Promise<ModelItem[]> {
-  const res = await fetch(`${API_URL}/api/prompt/models`);
-  return res.json();
-}
-
-export async function expandBlueprint(payload: {
-  subject: string;
-  action?: string;
-  style?: string;
-  context?: string;
-  complexity?: number;
-}): Promise<PromptBlueprint> {
-  const res = await fetch(`${API_URL}/api/prompt/expand`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error("Expansion failed");
-  return res.json();
-}
-
-export async function generateArtwork(payload: {
-  subject: string;
-  action?: string;
-  style?: string;
-  context?: string;
-  resolution?: string;
-  complexity?: number;
-  modelId?: string;
-  token?: string;
-}): Promise<GenerationResult> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (payload.token) headers["Authorization"] = `Bearer ${payload.token}`;
-
-  const res = await fetch(`${API_URL}/api/prompt/create`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error("Generation failed");
-  return res.json();
-}
-```
-
-### Real-Time Streaming Hook
-
-Save in `hooks/usePromptStream.ts`:
+Save as `hooks/useGenerationJob.ts`:
 
 ```typescript
-import { useState } from "react";
-import { PromptBlueprint, GenerationResult, StreamStageEvent } from "@/types/promptsmith";
+import { useState, useRef } from "react";
+import { CreateGenerationPayload, GenerationJobResponse, GenerationCompleteEvent, PromptBlueprint } from "@/types/generation";
 
-export function usePromptStream() {
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState("");
+export function useGenerationJob() {
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("idle");
+  const [progress, setProgress] = useState<number>(0);
+  const [statusMessage, setStatusMessage] = useState<string>("");
   const [blueprint, setBlueprint] = useState<PromptBlueprint | null>(null);
-  const [result, setResult] = useState<GenerationResult | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const startStream = (params: Record<string, string | number>) => {
-    setLoading(true);
-    setProgress(10);
-    setStatusMessage("Connecting to PromptSmith Neural Stream...");
-    setError(null);
-    setResult(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-    const query = new URLSearchParams(params as Record<string, string>).toString();
-    const eventSource = new EventSource(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/prompt/stream?${query}`);
+  const startGeneration = async (payload: CreateGenerationPayload, token?: string) => {
+    try {
+      setStatus("submitting");
+      setProgress(5);
+      setStatusMessage("Enqueuing generation job...");
+      setError(null);
+      setImageUrl(null);
 
-    eventSource.addEventListener("stage", (e) => {
-      const data: StreamStageEvent = JSON.parse(e.data);
-      setProgress(data.progress);
-      setStatusMessage(data.message);
-    });
+      // Generate unique idempotency key for this generation attempt
+      const idempotencyKey = crypto.randomUUID();
 
-    eventSource.addEventListener("blueprint", (e) => {
-      const data: PromptBlueprint = JSON.parse(e.data);
-      setBlueprint(data);
-    });
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey
+      };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    eventSource.addEventListener("complete", (e) => {
-      const data: GenerationResult = JSON.parse(e.data);
-      setProgress(100);
-      setStatusMessage("Artwork Complete!");
-      setResult(data);
-      setLoading(false);
-      eventSource.close();
-    });
+      // 1. Post job to backend
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/generations`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
 
-    eventSource.addEventListener("error", (e: any) => {
-      console.error("Stream error:", e);
-      setError("Generation stream encountered an error");
-      setLoading(false);
-      eventSource.close();
-    });
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error?.message || "Failed to create generation job");
+      }
+
+      const job: GenerationJobResponse = await res.json();
+      setJobId(job.jobId);
+      setStatus(job.status);
+      setProgress(10);
+      setStatusMessage("Job enqueued. Connecting to telemetry stream...");
+
+      // 2. Connect to pure read-only SSE stream
+      const sseUrl = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}${job.eventsUrl}`;
+      const es = new EventSource(sseUrl);
+      eventSourceRef.current = es;
+
+      es.addEventListener("stage", (e) => {
+        const data = JSON.parse(e.data);
+        setProgress(data.progress || 30);
+        setStatusMessage(data.message || "Synthesizing artwork...");
+      });
+
+      es.addEventListener("blueprint", (e) => {
+        const bp: PromptBlueprint = JSON.parse(e.data);
+        setBlueprint(bp);
+      });
+
+      es.addEventListener("complete", (e) => {
+        const data: GenerationCompleteEvent = JSON.parse(e.data);
+        setProgress(100);
+        setStatus("completed");
+        setStatusMessage("Generation complete!");
+        setImageUrl(data.imageUrl);
+        es.close();
+      });
+
+      es.addEventListener("failed", (e) => {
+        const data = JSON.parse(e.data);
+        setStatus("failed");
+        setError(data.message || "Generation failed");
+        es.close();
+      });
+
+      es.addEventListener("cancelled", (e) => {
+        setStatus("cancelled");
+        setStatusMessage("Generation cancelled");
+        es.close();
+      });
+
+      es.onerror = () => {
+        // SSE handles reconnection automatically with retry: 3000
+        console.warn("SSE connection interrupted, retrying...");
+      };
+    } catch (err: any) {
+      setStatus("failed");
+      setError(err.message || "An error occurred");
+    }
   };
 
-  return { startStream, loading, progress, statusMessage, blueprint, result, error };
+  const cancelJob = async (token?: string) => {
+    if (!jobId) return;
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/generations/${jobId}/cancel`, {
+        method: "POST",
+        headers
+      });
+
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      setStatus("cancelled");
+      setStatusMessage("Generation cancelled by user.");
+    } catch (err) {
+      console.error("Cancel request failed:", err);
+    }
+  };
+
+  return {
+    startGeneration,
+    cancelJob,
+    jobId,
+    status,
+    progress,
+    statusMessage,
+    blueprint,
+    imageUrl,
+    error
+  };
 }
 ```
 
 ---
 
-## 🛡️ Resilience & Failover Gateway
+## 🛡️ Resilience: Three-State Circuit Breaker
+
+The backend protects against cascading failures and quota depletion:
 
 ```
-             ┌─────────────────────────┐
-             │ Client Generation Req   │
-             └────────────┬────────────┘
-                          │
-                          ▼
-             ┌─────────────────────────┐
-             │ Gemini 2.5 / 3 Flash    │ (Few-shot prompt expansion)
-             └────────────┬────────────┘
-                          │
-                          ▼
-             ┌─────────────────────────┐
-             │  Primary: NVIDIA FLUX   │
-             └───────┬─────────┬───────┘
-                     │         │
-             Success │         │ 403 / 429 / Quota / Timeout
-                     ▼         ▼
-          ┌─────────────┐   ┌─────────────────────────────┐
-          │ Base64 Image│   │ Failover: Pollinations FLUX │ (Zero-key fallback)
-          └─────────────┘   └──────────────┬──────────────┘
-                                           │
-                                           ▼
-                                    ┌─────────────┐
-                                    │ Base64 Image│
-                                    └─────────────┘
+           ┌──────────────────────┐
+           │   CLOSED (Healthy)   │ ◄─────── Probe Succeeded
+           └──────────┬───────────┘
+                      │
+           3 Consecutive Failures
+                      │
+                      ▼
+           ┌──────────────────────┐
+           │     OPEN (Tripped)   │ ───────► Immediate failover to Pollinations
+           └──────────┬───────────┘          (No calls dispatched to primary)
+                      │
+           60s Cooldown Elapsed
+                      │
+                      ▼
+           ┌──────────────────────┐
+           │      HALF_OPEN       │ ───────► Probe Request Dispatched
+           └──────────┬───────────┘
+                      │
+               Probe Failed
+                      │
+                      ▼
+             Re-enter OPEN State
 ```
 
 ---
 
-## 🔒 Production Hardening & Security
+## 🚨 Error Handling Contract
 
-1. **Helmet HTTP Headers:** Sets hardened HTTP headers to prevent MIME sniffing, clickjacking, and XSS attacks.
-2. **Multi-Tier Rate Limiting:**
-   - Global: 100 requests per 15 minutes per IP.
-   - AI Endpoints: 20 requests per minute per IP to prevent financial/API-key depletion.
-3. **Structured Schema Validation:** Strict JSON response validation prevents Gemini hallucinations.
-4. **Resilient Error Boundaries:** Centralized catch-all and unhandled error middlewares prevent server crashes.
+All error responses return structured JSON:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "Invalid input parameters provided",
+    "requestId": "req_5f2c418a-9e58-4a61-8280-928d32be6a24",
+    "retryable": false,
+    "details": [
+      { "field": "subject", "message": "Subject is required and cannot be empty" }
+    ]
+  }
+}
+```
+
+### Machine-Readable Error Codes:
+- `VALIDATION_FAILED`: Request payload schema invalid.
+- `RATE_LIMITED` / `AI_RATE_LIMITED`: Rate limits reached.
+- `UNAUTHORIZED` / `AUTH_FORBIDDEN`: JWT missing, expired, or resource belongs to another user.
+- `JOB_NOT_FOUND`: Specified `jobId` does not exist.
+- `PROVIDER_TIMEOUT`: Primary AI engine timed out.
+- `GENERATION_CANCELLED`: Job aborted by user.
+- `INTERNAL_SERVER_ERROR`: Unhandled server exception.
 
 ---
 
-## 🏆 Resume & Portfolio Highlights
+## 🏆 Resume & Engineering Showcase Highlights
 
-Use these impact-driven bullets for your resume:
-
-- **Generative AI Gateway & Orchestration:**
-  > *"Architected a fault-tolerant multi-provider AI gateway integrating Google Gemini 2.5 Flash and NVIDIA FLUX with automatic circuit-breaker failover to secondary cloud inference providers, achieving 99.9% generation uptime."*
-- **Real-Time Telemetry Streaming:**
-  > *"Engineered real-time synthesis telemetry via Server-Sent Events (SSE), streaming generation milestones and reducing perceived user latency by 45%."*
-- **Prompt Engineering & Structured Outputs:**
-  > *"Designed a structured prompt expansion pipeline utilizing few-shot exemplar injection and strict JSON schema guarantees to optimize art director blueprints."*
-- **Full-Stack Security & Resilience:**
-  > *"Implemented multi-tier rate limiting, JWT token guards with optional guest degradation, Helmet HTTP hardening, and automated Mongoose version control."*
+- **Asynchronous Decoupled AI Pipeline:**
+  > *"Architected a decoupled Generative AI job engine separating job dispatch (`POST /api/generations`) from Server-Sent Events telemetry (`GET /events`), preventing duplicate inferences during browser network reconnections."*
+- **Idempotency & Concurrency Management:**
+  > *"Implemented distributed request idempotency with MongoDB sparse indexing and an in-process concurrency-limited queue, eliminating duplicate billing and throttling risks."*
+- **Three-State Circuit Breaker & Automatic Failover:**
+  > *"Engineered a formal Three-State Circuit Breaker (`CLOSED`, `OPEN`, `HALF_OPEN`) with exponential backoff and automatic failover from NVIDIA NIM to Pollinations FLUX, ensuring zero-downtime availability."*
+- **Enterprise Observability & Security:**
+  > *"Integrated distributed request tracing (`X-Request-ID`), Kubernetes-compatible liveness/readiness probes (`/health/live`, `/health/ready`), and atomic IDOR ownership validation."*

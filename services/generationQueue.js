@@ -3,11 +3,10 @@ const { Generation, GenerationStatus } = require("../models/Generation");
 const ArtifactModel = require("../models/Artifact");
 const { chatWithGemini } = require("./geminiService");
 const { promptSchema } = require("../schemas/promptSchema");
-const { generateImage } = require("./nvidiaService");
+const providerRouter = require("./providerRouter");
 const {
   GENERATE_PROMPT_SYSTEM,
-  GENERATE_PROMPT_USER,
-  IMAGE_QUALITY_SYSTEM
+  GENERATE_PROMPT_USER
 } = require("../utils/prompts");
 
 class GenerationQueue extends EventEmitter {
@@ -182,22 +181,22 @@ class GenerationQueue extends EventEmitter {
       });
 
       // === Stage 2: Neural Image Synthesis ===
-      const imageUrl = await generateImage(
-        blueprint.prompt,
-        generation.input.resolution || "16:9",
-        IMAGE_QUALITY_SYSTEM,
-        generation.modelId || "flux-1-dev",
-        null,
-        false,
-        null,
-        generation.input.seed,
+      const synthResult = await providerRouter.synthesizeImage({
+        prompt: blueprint.prompt,
+        resolution: generation.input.resolution || "16:9",
+        modelId: generation.modelId || "flux-1-dev",
+        seed: generation.input.seed,
         signal
-      );
+      });
 
       if (signal.aborted) throw new Error("AbortError");
-      if (!imageUrl) {
+      if (!synthResult || !synthResult.imageUrl) {
         throw new Error("Neural synthesis engine produced empty output");
       }
+
+      const imageUrl = synthResult.imageUrl;
+      generation.fallbackUsed = Boolean(synthResult.fallbackUsed);
+      generation.provider = synthResult.provider;
 
       // === Stage 3: Archiving & Persistence ===
       await generation.updateStage("archiving", 85);

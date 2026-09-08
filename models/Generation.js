@@ -54,7 +54,7 @@ const GenerationSchema = new mongoose.Schema(
       context: { type: String, default: "" },
       complexity: { type: Number, default: 3 },
       resolution: { type: String, default: "16:9" },
-      modelId: { type: String, default: "flux-1-dev" },
+      modelId: { type: String, default: "flux-2-klein" },
       seed: { type: Number, default: null },
       steps: { type: Number, default: null }
     },
@@ -73,7 +73,7 @@ const GenerationSchema = new mongoose.Schema(
     },
     modelId: {
       type: String,
-      default: "flux-1-dev"
+      default: "flux-2-klein"
     },
     attempt: {
       type: Number,
@@ -135,7 +135,7 @@ GenerationSchema.statics.computePayloadHash = function (input) {
     context: (input.context || "").trim().toLowerCase(),
     complexity: Number(input.complexity) || 3,
     resolution: input.resolution || "16:9",
-    modelId: input.modelId || "flux-1-dev",
+    modelId: input.modelId || "flux-2-klein",
     seed: input.seed !== null && input.seed !== undefined ? Number(input.seed) : null
   });
   return crypto.createHash("sha256").update(canonical).digest("hex");

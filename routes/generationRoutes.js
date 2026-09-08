@@ -4,6 +4,7 @@ const {
   createGeneration,
   getStreamTicket,
   getGenerationEvents,
+  streamEvents,
   getGenerationStatus,
   cancelGeneration,
   listGenerations
@@ -25,7 +26,7 @@ router.post("/:id/ticket", optionalProtect, getStreamTicket);
 router.get("/:id", optionalProtect, getGenerationStatus);
 
 // Pure read-only Server-Sent Events stream for telemetry (Supports Bearer, Cookie, or ?ticket=)
-router.get("/:id/events", optionalProtect, getGenerationEvents);
+router.get("/:id/events", optionalProtect, streamEvents || getGenerationEvents);
 
 // Cancel in-progress or queued generation (IDOR protected)
 router.post("/:id/cancel", optionalProtect, cancelGeneration);

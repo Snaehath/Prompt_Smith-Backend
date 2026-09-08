@@ -118,11 +118,7 @@ Query `GET /api/prompt/models` to retrieve available engines:
 
 | Model ID | Provider | Steps | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| **`flux-1-dev`** | NVIDIA NIM | 50 | ✅ Yes | Premium ultra-high-fidelity generation |
-| **`flux-1-schnell`** | NVIDIA NIM | 4 | No | Fast generation |
-| **`flux-2-klein`** | NVIDIA NIM | 4 | No | Compact next-generation architecture |
-| **`pollinations-flux`** | Pollinations AI | Auto | No | Free, zero-key FLUX cloud inference engine |
-| **`pollinations-turbo`** | Pollinations AI | Auto | No | Real-time SDXL-Turbo image synthesis |
+| **`flux-2-klein`** | NVIDIA NIM | 4 | ✅ Yes | Next-gen ultra-fast distilled neural synthesis (4 steps) |
 
 ---
 

@@ -1,22 +1,7 @@
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-const NVIDIA_MODELS = {
-  "flux-1-dev": {
-    url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev",
-    steps: 50,
-    maxPromptLength: 800
-  },
-  "flux-1-schnell": {
-    url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
-    steps: 4,
-    maxPromptLength: 800
-  },
-  "flux-2-klein": {
-    url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
-    steps: 4,
-    maxPromptLength: 800
-  }
-};
+// Verified active NVIDIA NIM endpoint: FLUX.2 Klein 4B
+const NVIDIA_FLUX_URL = "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b";
 
 class NvidiaAdapter {
   constructor() {
@@ -27,7 +12,7 @@ class NvidiaAdapter {
     return Boolean(process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.trim().length > 0);
   }
 
-  async generateImage({ prompt, width = 1024, height = 1024, steps = null, seed = null, modelId = "flux-1-dev", signal = null }) {
+  async generateImage({ prompt, width = 1024, height = 1024, steps = null, seed = null, modelId = "flux-2-klein", signal = null }) {
     const apiKey = process.env.NVIDIA_API_KEY;
     if (!apiKey) {
       const err = new Error("NVIDIA_API_KEY is not configured");
@@ -36,18 +21,21 @@ class NvidiaAdapter {
       throw err;
     }
 
-    const model = NVIDIA_MODELS[modelId] || NVIDIA_MODELS["flux-1-dev"];
+    // NVIDIA NIM FLUX.2 Klein 4B strictly enforces a maximum prompt length of 800 characters
     let cappedPrompt = prompt.trim();
-    if (model.maxPromptLength && cappedPrompt.length > model.maxPromptLength) {
-      cappedPrompt = cappedPrompt.substring(0, model.maxPromptLength - 10);
+    if (cappedPrompt.length > 800) {
+      cappedPrompt = cappedPrompt.substring(0, 800);
     }
+
+    // FLUX.2 Klein 4B optimal step count is 4 (supported range: 1-8)
+    const finalSteps = Math.min(Math.max(Number(steps) || 4, 1), 8);
 
     const payload = {
       prompt: cappedPrompt,
       width,
       height,
       seed: seed !== null ? seed : Math.floor(Math.random() * 1000000),
-      steps: steps || model.steps || 50
+      steps: finalSteps
     };
 
     const fetchOptions = {
@@ -61,7 +49,7 @@ class NvidiaAdapter {
       ...(signal && { signal })
     };
 
-    const response = await fetch(model.url, fetchOptions);
+    const response = await fetch(NVIDIA_FLUX_URL, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -79,15 +67,29 @@ class NvidiaAdapter {
       throw new Error("NVIDIA response contained no image payload");
     }
 
+    const dataUrl = base64.startsWith("data:") ? base64 : `data:image/png;base64,${base64}`;
+
     return {
-      imageUrl: `data:image/png;base64,${base64}`,
+      imageUrl: dataUrl,
       provider: "nvidia",
       modelId
     };
   }
 
   normalizeError(status, bodyText) {
-    const error = new Error(`NVIDIA API HTTP ${status}: ${bodyText}`);
+    let cleanDetail = "";
+    try {
+      const parsed = JSON.parse(bodyText);
+      if (parsed.detail && Array.isArray(parsed.detail)) {
+        cleanDetail = parsed.detail.map((d) => d.msg || d.type).join("; ");
+      } else if (parsed.message) {
+        cleanDetail = parsed.message;
+      }
+    } catch {
+      cleanDetail = `Status code ${status}`;
+    }
+
+    const error = new Error(`NVIDIA API HTTP ${status}${cleanDetail ? `: ${cleanDetail}` : ""}`);
     error.status = status;
 
     if (status === 429) {
@@ -95,7 +97,7 @@ class NvidiaAdapter {
       error.retryable = true;
     } else if (status === 401 || status === 403) {
       error.code = "AUTH_FORBIDDEN";
-      error.retryable = false; // Never blindly retry auth/quota failures
+      error.retryable = false;
     } else if (status >= 500) {
       error.code = "PROVIDER_SERVER_ERROR";
       error.retryable = true;
@@ -130,7 +132,11 @@ class NvidiaAdapter {
 
       if (!response.ok) return null;
       const data = await response.json();
-      return `data:image/png;base64,${data.image || data.b64_json}`;
+      const b64 = data.image || data.b64_json;
+      if (!b64) return null;
+
+      const dataUrl = b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
+      return dataUrl;
     } catch (error) {
       console.error("NVIDIA upscaling error:", error.message);
       return null;
@@ -139,4 +145,3 @@ class NvidiaAdapter {
 }
 
 module.exports = new NvidiaAdapter();
-

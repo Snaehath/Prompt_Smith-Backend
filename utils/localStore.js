@@ -470,7 +470,7 @@ const LocalGeneration = {
       context: (input.context || "").trim().toLowerCase(),
       complexity: Number(input.complexity) || 3,
       resolution: input.resolution || "16:9",
-      modelId: input.modelId || "flux-1-dev",
+      modelId: input.modelId || "flux-2-klein",
       seed: input.seed !== null && input.seed !== undefined ? Number(input.seed) : null
     });
     return crypto.createHash("sha256").update(canonical).digest("hex");

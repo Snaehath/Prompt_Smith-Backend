@@ -3,6 +3,8 @@ const router = express.Router();
 const {
   listModels,
   getArchive,
+  generatePromptHandler,
+  enhancePromptHandler,
   expandPromptBlueprint,
   createPromptAndImage,
   refinePromptImage,
@@ -18,8 +20,11 @@ router.get("/models", listModels);
 // Neural Archive (associates with logged in user if token present)
 router.get("/archive", optionalProtect, getArchive);
 
-// Blueprint Expansion (Gemini reasoning)
-router.post("/expand", aiRateLimiter, expandPromptBlueprint);
+// Gemini Prompt Copilot: Generate prompt from idea (POST /api/prompt/generate)
+router.post("/generate", aiRateLimiter, generatePromptHandler);
+
+// Gemini Prompt Copilot: Enhance existing prompt (POST /api/prompt/enhance and /api/prompt/expand)
+router.post(["/enhance", "/expand"], aiRateLimiter, enhancePromptHandler);
 
 // Full Synthesis Pipeline (Gemini + FLUX)
 router.post("/create", aiRateLimiter, optionalProtect, createPromptAndImage);

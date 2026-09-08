@@ -30,6 +30,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/prompts", promptRoutes);
 app.use("/api/prompt", neuralRoutes);
 app.use("/api/generations", generationRoutes);
+app.use("/generations", generationRoutes);
 
 
 // System Health & Observability Probes

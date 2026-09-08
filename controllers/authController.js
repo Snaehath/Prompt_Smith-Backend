@@ -72,3 +72,40 @@ exports.loginUser = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * @desc    Generate a 1-click temporary demo/dummy account with credentials
+ * @route   POST /api/auth/demo-account (also /quick-account, /generate-dummy)
+ */
+exports.createDummyAccount = async (req, res, next) => {
+  try {
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const email = `pilot_${randomSuffix}@promptsmith.local`;
+    const password = `Smith#${randomSuffix}!`;
+    const name = `Neural Pilot #${randomSuffix}`;
+
+    const user = await User.create({
+      name,
+      email,
+      password
+    });
+
+    const token = generateToken(user._id);
+
+    res.status(201).json({
+      message: "Temporary account generated successfully. Keep these credentials to log in anytime.",
+      credentials: {
+        email,
+        password
+      },
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email
+      },
+      token
+    });
+  } catch (error) {
+    next(error);
+  }
+};

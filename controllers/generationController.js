@@ -16,17 +16,31 @@ const writeSSE = (res, id, event, data) => {
  */
 exports.createGeneration = async (req, res, next) => {
   try {
+    const params = (req.body.parameters && typeof req.body.parameters === "object" && !Array.isArray(req.body.parameters))
+      ? req.body.parameters
+      : {};
+
     const {
       subject,
       action = "",
       style = "",
       context = "",
       complexity = 3,
-      resolution = "16:9",
-      modelId = "flux-1-dev",
-      seed = null,
-      steps = null
+      modelId = "flux-2-klein"
     } = req.body;
+
+    const resolution = req.body.resolution || req.body.aspectRatio || params.aspectRatio || params.resolution || "16:9";
+    const rawSteps = req.body.steps !== undefined ? req.body.steps : params.steps;
+    const rawSeed = req.body.seed !== undefined ? req.body.seed : params.seed;
+
+    const steps = (rawSteps !== undefined && rawSteps !== null && rawSteps !== "" && !isNaN(Number(rawSteps)))
+      ? Number(rawSteps)
+      : null;
+
+    // Allow valid integer seed >= 0; omitted/null/undefined handled as null (random)
+    const seed = (rawSeed !== undefined && rawSeed !== null && rawSeed !== "" && !isNaN(Number(rawSeed)) && Number(rawSeed) >= 0)
+      ? Number(rawSeed)
+      : null;
 
     const numComplexity = Math.min(Math.max(Number(complexity) || 3, 1), 5);
 
@@ -160,13 +174,14 @@ exports.getGenerationEvents = async (req, res, next) => {
       }
     }
 
-    // Configure headers for resilient SSE
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no"
-    });
+    // Configure headers for resilient SSE streaming
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders();
+    }
 
     // Reconnection advice for browser EventSource
     res.write("retry: 3000\n\n");
@@ -333,3 +348,6 @@ exports.listGenerations = async (req, res, next) => {
     next(error);
   }
 };
+
+// Aliased for route/spec compatibility
+exports.streamEvents = exports.getGenerationEvents;

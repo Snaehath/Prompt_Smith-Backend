@@ -3,20 +3,8 @@
 const providerRouter = require("./providerRouter");
 const pollinationsAdapter = require("./providers/pollinationsAdapter");
 
-// NVIDIA NIM Neural Engine definitions and constraints for legacy callers
+// Active NVIDIA NIM Neural Engine definition
 const MODELS = {
-  "flux-1-dev": {
-    url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev",
-    steps: 50,
-    maxPromptLength: 800,
-    provider: "nvidia"
-  },
-  "flux-1-schnell": {
-    url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
-    steps: 4,
-    maxPromptLength: 800,
-    provider: "nvidia"
-  },
   "flux-2-klein": {
     url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
     steps: 4,
@@ -25,9 +13,7 @@ const MODELS = {
   }
 };
 
-/**
- * Direct synthesizer using Pollinations AI engine (Zero-key failover & free provider)
- */
+// Pollinations AI direct synthesizer (free failover)
 const generateWithPollinations = async (prompt, width = 1024, height = 1024, seed = null, engine = "flux", signal = null) => {
   try {
     const result = await pollinationsAdapter.generateImage({
@@ -48,15 +34,12 @@ const generateWithPollinations = async (prompt, width = 1024, height = 1024, see
   }
 };
 
-/**
- * Resilient Image Synthesis Gateway
- * Routes request through ProviderRouter with Circuit Breaker and automatic Pollinations failover.
- */
+// Resilient Image Synthesis Gateway via ProviderRouter
 const generateImage = async (
   prompt,
   resolution = "16:9",
   systemPrompt = "",
-  modelId = "flux-1-dev",
+  modelId = "flux-2-klein",
   inputImage = null,
   isTiled = false,
   customSteps = null,
@@ -64,7 +47,7 @@ const generateImage = async (
   signal = null
 ) => {
   if (!prompt || typeof prompt !== "string") {
-    console.error("Invalid prompt input:", prompt);
+    console.error("Invalid prompt input: prompt string required");
     return null;
   }
 
@@ -90,9 +73,7 @@ const generateImage = async (
   }
 };
 
-/**
- * Super-Resolution / Upscale an existing image
- */
+// Super-Resolution / Upscale an existing image
 const upscaleImage = async (imageUrl, factor = 2) => {
   return await providerRouter.upscaleImage(imageUrl, factor);
 };

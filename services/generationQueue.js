@@ -1,13 +1,7 @@
 const { EventEmitter } = require("events");
 const { Generation, GenerationStatus } = require("../models/Generation");
 const ArtifactModel = require("../models/Artifact");
-const { chatWithGemini } = require("./geminiService");
-const { promptSchema } = require("../schemas/promptSchema");
 const providerRouter = require("./providerRouter");
-const {
-  GENERATE_PROMPT_SYSTEM,
-  GENERATE_PROMPT_USER
-} = require("../utils/prompts");
 
 class GenerationQueue extends EventEmitter {
   constructor(concurrency = 4) {
@@ -210,40 +204,45 @@ class GenerationQueue extends EventEmitter {
         return;
       }
 
-      this.emitEvent(generationId, "stage", {
-        stage: "blueprint_synthesis",
-        progress: 20,
-        message: "Expanding visual blueprint with Gemini reasoning engine..."
-      });
+      // Use user's exact detailed prompt directly without internal modification
+      let finalPrompt = (generation.input.subject || "").trim();
+      const extras = [generation.input.action, generation.input.style, generation.input.context]
+        .filter(Boolean)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (extras.length > 0) {
+        finalPrompt += `, ${extras.join(", ")}`;
+      }
 
-      const userText = GENERATE_PROMPT_USER(
-        generation.input.subject,
-        generation.input.action,
-        generation.input.style,
-        generation.input.context,
-        generation.input.complexity || 3
-      );
+      const blueprint = {
+        title: (generation.input.subject || "Generated Art").slice(0, 32).trim(),
+        subject: generation.input.subject || "",
+        action: generation.input.action || "",
+        style: generation.input.style || "",
+        context: generation.input.context || "",
+        description: generation.input.subject || "",
+        prompt: finalPrompt
+      };
 
-      const blueprint = await chatWithGemini(GENERATE_PROMPT_SYSTEM, userText, promptSchema);
       if (signal.aborted) throw new Error("AbortError");
 
       // Update blueprint in DB
       await Generation.findByIdAndUpdate(generationId, {
-        $set: { blueprint, stage: "visual_rendering", progress: 50 }
+        $set: { blueprint, stage: "visual_rendering", progress: 40 }
       });
 
       this.emitEvent(generationId, "blueprint", blueprint);
       this.emitEvent(generationId, "stage", {
         stage: "visual_rendering",
-        progress: 50,
-        message: `Synthesizing canvas using ${generation.modelId} engine...`
+        progress: 40,
+        message: `Synthesizing canvas using ${generation.modelId || "FLUX.2"} engine...`
       });
 
       // === Stage 2: Neural Image Synthesis ===
       const synthResult = await providerRouter.synthesizeImage({
         prompt: blueprint.prompt,
         resolution: generation.input.resolution || "16:9",
-        modelId: generation.modelId || "flux-1-dev",
+        modelId: generation.modelId || "flux-2-klein",
         seed: generation.input.seed,
         signal
       });
@@ -274,7 +273,7 @@ class GenerationQueue extends EventEmitter {
         modelId: generation.modelId,
         resolution: generation.input.resolution || "16:9",
         userId: generation.userId,
-        imageUrl: imageUrl.startsWith("http") ? imageUrl : null,
+        imageUrl: imageUrl || null,
         metadata: {
           generationDurationMs: durationMs,
           seed: generation.input.seed

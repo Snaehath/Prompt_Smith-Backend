@@ -14,13 +14,11 @@ class ProviderRouter {
     });
   }
 
-  /**
-   * Synthesize image with Circuit Breaker and Exponential Backoff
-   */
+  // Synthesize image with Circuit Breaker and fallback
   async synthesizeImage({
     prompt,
     resolution = "16:9",
-    modelId = "flux-1-dev",
+    modelId = "flux-2-klein",
     steps = null,
     seed = null,
     signal = null
@@ -101,9 +99,7 @@ class ProviderRouter {
     }, fallbackToPollinations);
   }
 
-  /**
-   * Super-resolution / Upscale an existing image
-   */
+  // Super-resolution / Upscale an existing image
   async upscaleImage(imageUrl, factor = 2) {
     return await nvidiaAdapter.upscaleImage(imageUrl, factor);
   }

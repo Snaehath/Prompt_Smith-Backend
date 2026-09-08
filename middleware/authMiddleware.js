@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const ApiError = require("../utils/ApiError");
+const { getSecret } = require("../utils/jwt");
 
 /**
  * Generate a short-lived (60s), single-purpose SSE stream ticket.
@@ -13,7 +14,7 @@ const createStreamTicket = (userId, jobId, expiresIn = 60) => {
       userId: userId ? userId.toString() : null,
       jobId: jobId.toString()
     },
-    process.env.JWT_SECRET,
+    getSecret(),
     { expiresIn }
   );
 };
@@ -27,7 +28,7 @@ const extractTokenAndVerify = async (req) => {
   // 1. Authorization: Bearer <token>
   if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
     token = req.headers.authorization.split(" ")[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, getSecret());
     if (decoded.id) {
       return await User.findById(decoded.id).select("-password");
     }
@@ -38,7 +39,7 @@ const extractTokenAndVerify = async (req) => {
     const match = req.headers.cookie.match(/(?:^|;\s*)token=([^;]+)/);
     if (match) {
       token = match[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, getSecret());
       if (decoded.id) {
         return await User.findById(decoded.id).select("-password");
       }
@@ -48,7 +49,7 @@ const extractTokenAndVerify = async (req) => {
   // 3. Short-lived SSE ticket in query (?ticket=...)
   if (req.query && req.query.ticket) {
     const ticket = req.query.ticket;
-    const decoded = jwt.verify(ticket, process.env.JWT_SECRET);
+    const decoded = jwt.verify(ticket, getSecret());
 
     if (decoded.type !== "sse_stream") {
       throw ApiError.unauthorized("Invalid ticket scope", "INVALID_TICKET_SCOPE");

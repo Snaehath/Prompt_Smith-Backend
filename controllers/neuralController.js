@@ -1,10 +1,7 @@
-const { chatWithGemini } = require("../services/geminiService");
-const { promptSchema } = require("../schemas/promptSchema");
+const { generatePromptFromIdea, enhanceExistingPrompt } = require("../services/geminiService");
 const { generateImage, upscaleImage } = require("../services/nvidiaService");
 const { getModels } = require("../services/modelRegistry");
 const {
-  GENERATE_PROMPT_SYSTEM,
-  GENERATE_PROMPT_USER,
   IMAGE_QUALITY_SYSTEM,
   RETRY_QUALITY_SYSTEM,
 } = require("../utils/prompts");
@@ -55,35 +52,48 @@ exports.getArchive = async (req, res, next) => {
 };
 
 /**
- * @desc    Expand raw ideas into structured art prompt blueprint
- * @route   POST /api/prompt/expand
+ * @desc    Generate a complete high-fidelity prompt from an idea (Gemini Copilot)
+ * @route   POST /api/prompt/generate
  */
-exports.expandPromptBlueprint = async (req, res, next) => {
-  const { subject, action, style, context, complexity } = req.body;
-
-  if (!subject || typeof subject !== "string" || subject.trim().length === 0) {
-    return next(ApiError.badRequest("Subject is required for prompt expansion", "INVALID_INPUT"));
-  }
-
-  const userText = GENERATE_PROMPT_USER(
-    subject,
-    action,
-    style,
-    context,
-    complexity || 3
-  );
+exports.generatePromptHandler = async (req, res, next) => {
+  const { topic = "a surreal fantasy landscape", style = "" } = req.body || {};
 
   try {
-    const result = await chatWithGemini(
-      GENERATE_PROMPT_SYSTEM,
-      userText,
-      promptSchema
-    );
+    const result = await generatePromptFromIdea(topic, style);
     res.status(200).json(result);
   } catch (error) {
     next(error);
   }
 };
+
+/**
+ * @desc    Enhance an existing prompt with cinematography and lighting (Gemini Copilot)
+ * @route   POST /api/prompt/enhance, /api/prompt/expand
+ */
+exports.enhancePromptHandler = async (req, res, next) => {
+  const { prompt, style = "", subject, action, context, complexity } = req.body || {};
+
+  try {
+    // 1. Direct prompt enhancement
+    if (prompt && typeof prompt === "string" && prompt.trim().length > 0) {
+      const result = await enhanceExistingPrompt(prompt.trim(), style);
+      return res.status(200).json(result);
+    }
+
+    // 2. Backward-compatible prompt enhancement if subject was sent
+    if (subject && typeof subject === "string" && subject.trim().length > 0) {
+      const result = await enhanceExistingPrompt(subject, style);
+      return res.status(200).json(result);
+    }
+
+    throw ApiError.badRequest("Prompt string or subject is required for prompt enhancement", "INVALID_INPUT");
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Backward-compatible alias for existing callers
+exports.expandPromptBlueprint = exports.enhancePromptHandler;
 
 /**
  * @desc    Full generation pipeline: Gemini expansion + Neural image synthesis
@@ -106,11 +116,28 @@ exports.createPromptAndImage = async (req, res, next) => {
   );
 
   try {
-    // 1. Expand prompt using Google Gemini
-    const result = await chatWithGemini(GENERATE_PROMPT_SYSTEM, userText, promptSchema);
+    // Direct pass-through: Use user's detailed prompt directly without internal modification
+    let finalPrompt = (subject || "").trim();
+    const extras = [action, style, context]
+      .filter(Boolean)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (extras.length > 0) {
+      finalPrompt += `, ${extras.join(", ")}`;
+    }
+
+    const result = {
+      title: (subject || "Generated Art").slice(0, 32).trim(),
+      subject: subject || "",
+      action: action || "",
+      style: style || "",
+      context: context || "",
+      description: subject || "",
+      prompt: finalPrompt
+    };
     
-    // 2. Synthesize image via Neural Gateway (NVIDIA NIM or Pollinations fallback)
-    const chosenModel = modelId || "flux-1-dev";
+    // Synthesize image via Neural Gateway (FLUX.2 Klein)
+    const chosenModel = modelId || "flux-2-klein";
     const imageUrl = await generateImage(
       result.prompt, 
       resolution || "16:9", 
@@ -168,7 +195,7 @@ exports.refinePromptImage = async (req, res, next) => {
   }
 
   const startTime = Date.now();
-  const chosenModel = modelId || "flux-1-dev";
+  const chosenModel = modelId || "flux-2-klein";
 
   try {
     const imageUrl = await generateImage(
@@ -258,19 +285,29 @@ exports.createStreamGeneration = async (req, res, next) => {
       message: "Analyzing creative pillars and crafting neural blueprint with Gemini..." 
     });
 
-    const userText = GENERATE_PROMPT_USER(
-      subject,
-      action,
-      style,
-      context,
-      Number(complexity) || 3
-    );
+    // Direct pass-through: Use user's detailed prompt directly without internal modification
+    let finalPrompt = (subject || "").trim();
+    const extras = [action, style, context]
+      .filter(Boolean)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (extras.length > 0) {
+      finalPrompt += `, ${extras.join(", ")}`;
+    }
 
-    const blueprint = await chatWithGemini(GENERATE_PROMPT_SYSTEM, userText, promptSchema);
+    const blueprint = {
+      title: (subject || "Generated Art").slice(0, 32).trim(),
+      subject: subject || "",
+      action: action || "",
+      style: style || "",
+      context: context || "",
+      description: subject || "",
+      prompt: finalPrompt
+    };
     sendSSE(res, "blueprint", blueprint);
 
     // Stage 2: Visual Synthesis
-    const chosenModel = modelId || "flux-1-dev";
+    const chosenModel = modelId || "flux-2-klein";
     sendSSE(res, "stage", { 
       stage: "visual_rendering", 
       progress: 65, 

@@ -1,11 +1,4 @@
-/**
- * Standard Three-State Circuit Breaker Pattern
- * States:
- *   - CLOSED: Normal operation. Requests flow through.
- *   - OPEN: Failure threshold exceeded. Requests immediately failover without hitting provider.
- *   - HALF_OPEN: Cooldown expired. Single probe request allowed to test provider recovery.
- */
-
+// Three-state circuit breaker: CLOSED, OPEN, HALF_OPEN
 const CircuitState = {
   CLOSED: "CLOSED",
   OPEN: "OPEN",
@@ -15,17 +8,15 @@ const CircuitState = {
 class CircuitBreaker {
   constructor(name, options = {}) {
     this.name = name;
-    this.failureThreshold = options.failureThreshold || 3; // Consecutive failures before opening
-    this.cooldownMs = options.cooldownMs || 60000; // 60 seconds before testing recovery
+    this.failureThreshold = options.failureThreshold || 3; // Consecutive failures to trip
+    this.cooldownMs = options.cooldownMs || 60000; // 60s probe cooldown
     this.state = CircuitState.CLOSED;
     this.failureCount = 0;
     this.lastFailureTime = null;
     this.successCount = 0;
   }
 
-  /**
-   * Execute primary action with circuit protection and automatic fallback
-   */
+  // Execute action with circuit protection and automatic fallback
   async execute(action, fallback) {
     const now = Date.now();
 

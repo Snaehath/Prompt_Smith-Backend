@@ -9,14 +9,21 @@ class PollinationsAdapter {
     return true; // Zero-key required
   }
 
-  async generateImage({ prompt, width = 1024, height = 1024, seed = null, modelId = "pollinations-flux", signal = null }) {
+  async generateImage({ prompt, width = 1024, height = 1024, seed = null, modelId = "pollinations-turbo", signal = null }) {
     const finalSeed = seed !== null ? seed : Math.floor(Math.random() * 1000000);
-    const engine = modelId.includes("turbo") ? "turbo" : "flux";
+    // Prefer turbo or default for high availability and zero rate limits
+    const engine = modelId.includes("flux") ? "turbo" : "turbo";
     const encodedPrompt = encodeURIComponent(prompt.trim());
     const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=${engine}&nologo=true&seed=${finalSeed}`;
 
     const fetchOptions = signal ? { signal } : {};
-    const response = await fetch(url, fetchOptions);
+    let response = await fetch(url, fetchOptions);
+
+    if (!response.ok) {
+      // Fallback to default engine if specific model was rate limited
+      const fallbackUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&nologo=true&seed=${finalSeed}`;
+      response = await fetch(fallbackUrl, fetchOptions);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -27,11 +34,11 @@ class PollinationsAdapter {
       throw error;
     }
 
-    const buffer = await response.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const dataUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
 
     return {
-      imageUrl: `data:image/jpeg;base64,${base64}`,
+      imageUrl: dataUrl,
       provider: "pollinations",
       modelId: `pollinations-${engine}`
     };

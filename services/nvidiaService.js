@@ -26,14 +26,15 @@ const MODELS = {
 /**
  * Direct synthesizer using Pollinations AI engine (Zero-key failover & free provider)
  */
-const generateWithPollinations = async (prompt, width = 1024, height = 1024, seed = null, engine = "flux") => {
+const generateWithPollinations = async (prompt, width = 1024, height = 1024, seed = null, engine = "flux", signal = null) => {
   try {
     const finalSeed = seed !== null ? seed : Math.floor(Math.random() * 1000000);
     const pollinationsModel = engine === "turbo" ? "turbo" : "flux";
     const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pollinationsModel}&nologo=true&seed=${finalSeed}`;
 
     console.log(`[Neural Gateway] Dispatching to Pollinations (${pollinationsModel})...`);
-    const res = await fetch(url);
+    const fetchOptions = signal ? { signal } : {};
+    const res = await fetch(url, fetchOptions);
     if (!res.ok) {
       console.error(`Pollinations inference error: HTTP ${res.status}`);
       return null;
@@ -43,6 +44,9 @@ const generateWithPollinations = async (prompt, width = 1024, height = 1024, see
     const base64 = Buffer.from(buffer).toString("base64");
     return `data:image/jpeg;base64,${base64}`;
   } catch (err) {
+    if (err.name === "AbortError" || signal?.aborted) {
+      throw err;
+    }
     console.error("Pollinations inference failed:", err.message);
     return null;
   }
@@ -60,7 +64,8 @@ const generateImage = async (
   inputImage = null,
   isTiled = false,
   customSteps = null,
-  customSeed = null
+  customSeed = null,
+  signal = null
 ) => {
   // Map resolution string to dimension buckets
   let width = 1024, height = 1024;
@@ -116,20 +121,23 @@ const generateImage = async (
   }
 
   try {
-    const response = await fetch(model.url, {
+    const fetchOptions = {
       method: "POST",
       body: JSON.stringify(payload),
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
         "Accept": "application/json",
-      }
-    });
+      },
+      ...(signal && { signal })
+    };
+
+    const response = await fetch(model.url, fetchOptions);
 
     if (!response.ok) {
       const errBody = await response.text();
       console.warn(`[Neural Gateway] NVIDIA API Warning (${response.status}) [${modelId}]: ${errBody}. Executing automatic failover...`);
-      return await generateWithPollinations(combinedPrompt, width, height, seed, "flux");
+      return await generateWithPollinations(combinedPrompt, width, height, seed, "flux", signal);
     }
 
     const data = await response.json();
@@ -139,10 +147,13 @@ const generateImage = async (
     if (data.b64_json) return `data:image/png;base64,${data.b64_json}`;
 
     // Fallback if unexpected JSON structure returned
-    return await generateWithPollinations(combinedPrompt, width, height, seed, "flux");
+    return await generateWithPollinations(combinedPrompt, width, height, seed, "flux", signal);
   } catch (error) {
+    if (error.name === "AbortError" || signal?.aborted) {
+      throw error;
+    }
     console.error("[Neural Gateway] NVIDIA request error, falling back to secondary engine:", error.message);
-    return await generateWithPollinations(combinedPrompt, width, height, seed, "flux");
+    return await generateWithPollinations(combinedPrompt, width, height, seed, "flux", signal);
   }
 };
 
